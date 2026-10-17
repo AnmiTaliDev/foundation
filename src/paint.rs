@@ -147,6 +147,9 @@ fn build_display_list(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     paint_background(layout_box, list);
     paint_borders(layout_box, list);
     for fragment in &layout_box.fragments {
+        if let Some((color, rect)) = fragment.background {
+            list.push(DisplayCommand::Rect(SolidRect { color, rect }));
+        }
         list.push(DisplayCommand::Text(fragment.clone()));
     }
     for child in &layout_box.children {
@@ -158,10 +161,7 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
-    let color = style
-        .color("background-color")
-        .or(style.color("background"));
-    if let Some(color) = color {
+    if let Some(color) = style.background() {
         list.push(DisplayCommand::Rect(SolidRect {
             color,
             rect: layout_box.dimensions.border_box(),

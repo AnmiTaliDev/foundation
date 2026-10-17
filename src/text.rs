@@ -30,3 +30,10 @@ pub fn ascent(font: &Font, font_size: f32) -> f32 {
         None => font_size,
     }
 }
+
+pub fn descent(font: &Font, font_size: f32) -> f32 {
+    match font.horizontal_line_metrics(font_size) {
+        Some(metrics) => -metrics.descent,
+        None => font_size * 0.2,
+    }
+}

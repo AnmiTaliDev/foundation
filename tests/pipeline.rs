@@ -436,3 +436,168 @@ fn page_render_scrolls_and_clamps() {
     assert_eq!(page.render(10, 20, -5.0).scroll_y, 0.0);
     assert_eq!(page.render(10, 200, 50.0).scroll_y, 0.0);
 }
+
+fn with_layout(source: &str, width: f32, check: impl FnOnce(&layout::LayoutBox)) {
+    let root = html::parse(source);
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let layout_root = layout::layout_tree(&styled, width, &text::default_font());
+    check(&layout_root);
+}
+
+#[test]
+fn sibling_margins_collapse() {
+    with_layout(
+        "<html><style>body { margin: 0 } div { margin: 10px 0; height: 10px }</style><body><div></div><div></div></body></html>",
+        100.0,
+        |root| {
+            let body = &root.children[0];
+            assert_eq!(body.dimensions.margin.top, 10.0);
+            assert_eq!(body.dimensions.margin.bottom, 10.0);
+            assert_eq!(body.children[0].dimensions.content.y, 10.0);
+            assert_eq!(body.children[1].dimensions.content.y, 30.0);
+            assert_eq!(body.dimensions.content.height, 30.0);
+        },
+    );
+}
+
+#[test]
+fn padding_prevents_parent_child_collapse() {
+    with_layout(
+        "<html><style>body { margin: 0; padding-top: 1px } div { margin-top: 10px; height: 5px }</style><body><div></div></body></html>",
+        100.0,
+        |root| {
+            let body = &root.children[0];
+            assert_eq!(body.dimensions.margin.top, 0.0);
+            assert_eq!(body.children[0].dimensions.content.y, 11.0);
+        },
+    );
+}
+
+#[test]
+fn mixed_sign_margins_are_summed() {
+    with_layout(
+        "<html><style>body { margin: 0 } .a { height: 10px; margin-bottom: 10px } .b { height: 10px; margin-top: -5px }</style><body><div class=\"a\"></div><div class=\"b\"></div></body></html>",
+        100.0,
+        |root| {
+            let body = &root.children[0];
+            assert_eq!(body.children[1].dimensions.content.y, 15.0);
+        },
+    );
+}
+
+#[test]
+fn min_and_max_sizes_clamp() {
+    with_layout(
+        "<html><style>body { margin: 0 } .a { width: 300px; max-width: 100px } .b { min-width: 150px; height: 5px } .c { height: 50px; max-height: 20px } .d { min-height: 30px }</style><body><div class=\"a\"></div><div class=\"b\"></div><div class=\"c\"></div><div class=\"d\"></div></body></html>",
+        120.0,
+        |root| {
+            let body = &root.children[0];
+            assert_eq!(body.children[0].dimensions.content.width, 100.0);
+            assert_eq!(body.children[1].dimensions.content.width, 150.0);
+            assert_eq!(body.children[2].dimensions.content.height, 20.0);
+            assert_eq!(body.children[3].dimensions.content.height, 30.0);
+        },
+    );
+}
+
+#[test]
+fn text_align_moves_lines() {
+    let font = text::default_font();
+    let word_width = text::text_width(&font, "abc", 16.0);
+    for (align, expected) in [
+        ("left", 0.0),
+        ("center", (200.0 - word_width) / 2.0),
+        ("right", 200.0 - word_width),
+    ] {
+        let source = format!(
+            "<html><style>body {{ margin: 0; text-align: {} }}</style><body><p>abc</p></body></html>",
+            align
+        );
+        with_layout(&source, 200.0, |root| {
+            let anonymous = first_anonymous(root).unwrap();
+            assert!(
+                (anonymous.fragments[0].x - expected).abs() < 0.001,
+                "{}",
+                align
+            );
+        });
+    }
+}
+
+#[test]
+fn line_height_sets_line_box_height() {
+    for (value, expected) in [("2", 32.0), ("40px", 40.0), ("1.5em", 24.0), ("200%", 32.0)] {
+        let source = format!(
+            "<html><style>body {{ margin: 0; line-height: {} }}</style><body>text</body></html>",
+            value
+        );
+        with_layout(&source, 200.0, |root| {
+            let anonymous = first_anonymous(root).unwrap();
+            assert!(
+                (anonymous.dimensions.content.height - expected).abs() < 0.001,
+                "{}",
+                value
+            );
+        });
+    }
+}
+
+#[test]
+fn css_keeps_unitless_numbers() {
+    let sheet = css::parse("p { line-height: 1.5; width: 5; height: -infpx; margin: 0 }");
+    let names: Vec<&str> = sheet.rules[0]
+        .declarations
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(sheet.rules[0].declarations[0].value, Value::Number(1.5));
+    assert_eq!(sheet.rules[0].declarations[1].value, Value::Number(5.0));
+    assert!(!names.contains(&"height"));
+}
+
+#[test]
+fn long_words_break_across_lines() {
+    let word = "abcdefghijklmnopqrstuvwxyz";
+    let source = format!(
+        "<html><style>body {{ margin: 0 }}</style><body>{}</body></html>",
+        word
+    );
+    let font = text::default_font();
+    with_layout(&source, 60.0, |root| {
+        let anonymous = first_anonymous(root).unwrap();
+        let joined: String = anonymous
+            .fragments
+            .iter()
+            .map(|f| f.text.as_str())
+            .collect();
+        assert_eq!(joined, word);
+        assert!(anonymous.fragments.len() > 2);
+        for fragment in &anonymous.fragments {
+            assert!(text::text_width(&font, &fragment.text, 16.0) <= 60.0 + 0.001);
+            assert_eq!(fragment.x, 0.0);
+        }
+    });
+}
+
+#[test]
+fn inline_background_covers_words_and_gap() {
+    let source = "<html><style>body { margin: 0 } span { background-color: lime }</style><body>x <span>ab cd</span></body></html>";
+    let root = html::parse(source);
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let fragments = &first_anonymous(&layout_root).unwrap().fragments;
+    assert_eq!(fragments.len(), 3);
+    assert!(fragments[0].background.is_none());
+    let (color, first) = fragments[1].background.unwrap();
+    let (_, second) = fragments[2].background.unwrap();
+    assert_eq!(color, GREEN);
+    assert!((first.x + first.width - second.x).abs() < 0.001);
+    assert!(first.height > 0.0);
+
+    let canvas = render(source, 200, 40);
+    let x = (first.x + 1.0) as usize;
+    let y = (first.y + 1.0).round() as usize;
+    assert_eq!(canvas.pixel(x, y), GREEN);
+}

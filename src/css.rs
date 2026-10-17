@@ -39,6 +39,7 @@ pub enum Value {
     Length(f32),
     Em(f32),
     Percent(f32),
+    Number(f32),
     Color(Color),
 }
 
@@ -416,19 +417,23 @@ fn parse_value(text: &str) -> Option<Value> {
     None
 }
 
+fn parse_number(text: &str) -> Option<f32> {
+    text.parse::<f32>().ok().filter(|number| number.is_finite())
+}
+
 fn parse_dimension(text: &str) -> Option<Value> {
     if let Some(number) = text.strip_suffix("px") {
-        return number.parse().ok().map(Value::Length);
+        return parse_number(number).map(Value::Length);
     }
     if let Some(number) = text.strip_suffix("em") {
-        return number.parse().ok().map(Value::Em);
+        return parse_number(number).map(Value::Em);
     }
     if let Some(number) = text.strip_suffix('%') {
-        return number.parse().ok().map(Value::Percent);
+        return parse_number(number).map(Value::Percent);
     }
-    match text.parse::<f32>() {
-        Ok(0.0) => Some(Value::Length(0.0)),
-        _ => None,
+    match parse_number(text)? {
+        0.0 => Some(Value::Length(0.0)),
+        number => Some(Value::Number(number)),
     }
 }
 

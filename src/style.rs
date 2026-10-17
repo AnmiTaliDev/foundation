@@ -7,7 +7,7 @@ use crate::dom::{ElementData, Node, NodeType};
 
 pub const USER_AGENT_STYLESHEET: &str =
     "head, style, script, title, meta, link, base { display: none; } \
-    span, a, b, i, em, strong, code, small, u, label { display: inline; } \
+    span, a, b, i, em, strong, code, small, u, label, mark, abbr, cite, kbd, samp, var, del, ins, s, q, sub, sup, time { display: inline; } \
     body { margin: 8px; } \
     h1 { font-size: 32px; } h2 { font-size: 24px; } h3 { font-size: 19px; } \
     p, h1, h2, h3 { margin-bottom: 12px; }";
@@ -16,7 +16,7 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 2] = ["color", "font-size"];
+const INHERITED_PROPERTIES: [&str; 4] = ["color", "font-size", "text-align", "line-height"];
 
 pub type PropertyMap = HashMap<String, Value>;
 
@@ -25,6 +25,13 @@ pub enum Display {
     Block,
     Inline,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Debug)]
@@ -98,6 +105,7 @@ fn style_node<'a>(
         NodeType::Element(element) => {
             let mut values = specified_values(element, ancestors, stylesheet, inherited);
             resolve_font_size(&mut values, parent);
+            resolve_line_height(&mut values);
             ancestors.push(element);
             let mut children = Vec::new();
             for child in &node.children {
@@ -128,6 +136,21 @@ fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
         Some(px) => values.insert("font-size".to_string(), Value::Length(px)),
         None => values.remove("font-size"),
     };
+}
+
+fn resolve_line_height(values: &mut PropertyMap) {
+    let font_size = match values.get("font-size") {
+        Some(Value::Length(px)) => *px,
+        _ => DEFAULT_FONT_SIZE,
+    };
+    let resolved = match values.get("line-height") {
+        Some(Value::Em(em)) => Some(em * font_size),
+        Some(Value::Percent(percent)) => Some(percent / 100.0 * font_size),
+        _ => None,
+    };
+    if let Some(px) = resolved {
+        values.insert("line-height".to_string(), Value::Length(px));
+    }
 }
 
 fn specified_values(
@@ -243,6 +266,26 @@ impl<'a> StyledNode<'a> {
             Some(Value::Length(px)) => *px,
             _ => DEFAULT_FONT_SIZE,
         }
+    }
+
+    pub fn line_height(&self) -> Option<f32> {
+        match self.value("line-height") {
+            Some(Value::Number(factor)) => Some(factor * self.font_size()),
+            Some(Value::Length(px)) => Some(*px),
+            _ => None,
+        }
+    }
+
+    pub fn text_align(&self) -> TextAlign {
+        match self.value("text-align") {
+            Some(Value::Keyword(keyword)) if keyword == "center" => TextAlign::Center,
+            Some(Value::Keyword(keyword)) if keyword == "right" => TextAlign::Right,
+            _ => TextAlign::Left,
+        }
+    }
+
+    pub fn background(&self) -> Option<Color> {
+        self.color("background-color").or(self.color("background"))
     }
 
     pub fn text_color(&self) -> Color {
