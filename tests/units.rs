@@ -252,3 +252,28 @@ fn viewport_height_follows_the_render_size() {
     assert_eq!(taller.pixel(0, 19), RED);
     assert_eq!(taller.pixel(0, 20), WHITE);
 }
+
+#[test]
+fn root_background_fills_the_canvas() {
+    let source = "<html><style>html { background-color: red } body { margin: 0 } div { height: 5px; background-color: lime }</style><body><div></div></body></html>";
+    let canvas = render(source, 10, 20);
+    assert_eq!(canvas.pixel(0, 0), Color { r: 0, g: 255, b: 0 });
+    assert_eq!(canvas.pixel(0, 10), RED);
+    assert_eq!(canvas.pixel(9, 19), RED);
+}
+
+#[test]
+fn body_background_fills_the_canvas_when_root_has_none() {
+    let source = "<html><style>body { margin: 0; background: red }</style><body></body></html>";
+    let canvas = render(source, 10, 20);
+    assert_eq!(canvas.pixel(0, 0), RED);
+    assert_eq!(canvas.pixel(9, 19), RED);
+}
+
+#[test]
+fn root_background_wins_over_body_background() {
+    let source = "<html><style>html { background: lime } body { margin: 0; background: red; height: 5px }</style><body></body></html>";
+    let canvas = render(source, 10, 20);
+    assert_eq!(canvas.pixel(0, 0), RED);
+    assert_eq!(canvas.pixel(0, 10), Color { r: 0, g: 255, b: 0 });
+}

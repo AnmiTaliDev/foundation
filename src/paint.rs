@@ -6,6 +6,7 @@ use crate::css::Color;
 use crate::inline::{Fragment, ImageFragment};
 use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
+use crate::style::Content;
 
 const WHITE: Color = Color {
     r: 255,
@@ -35,10 +36,14 @@ pub struct Canvas {
 
 impl Canvas {
     pub fn new(width: usize, height: usize) -> Canvas {
+        Canvas::filled(width, height, WHITE)
+    }
+
+    pub fn filled(width: usize, height: usize, color: Color) -> Canvas {
         Canvas {
             width,
             height,
-            pixels: vec![WHITE; width * height],
+            pixels: vec![color; width * height],
         }
     }
 
@@ -163,7 +168,7 @@ fn blend_channel(background: u8, foreground: u8, coverage: u8) -> u8 {
 pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font: &Font) -> Canvas {
     let mut list = Vec::new();
     build_display_list(root, &mut list);
-    let mut canvas = Canvas::new(width, height);
+    let mut canvas = Canvas::filled(width, height, canvas_background(root));
     for command in &list {
         match command {
             DisplayCommand::Rect(item) => {
@@ -184,6 +189,24 @@ pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font:
         }
     }
     canvas
+}
+
+fn canvas_background(root: &LayoutBox) -> Color {
+    if let BoxKind::Block(style) = root.kind {
+        if let Some(color) = style.background() {
+            return color;
+        }
+    }
+    for child in &root.children {
+        if let BoxKind::Block(style) = child.kind {
+            if let Content::Element(element) = style.content {
+                if element.tag_name == "body" {
+                    return style.background().unwrap_or(WHITE);
+                }
+            }
+        }
+    }
+    WHITE
 }
 
 fn build_display_list(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
