@@ -51,6 +51,14 @@ impl Canvas {
         }
     }
 
+    pub fn to_argb(&self) -> Vec<u32> {
+        let mut out = Vec::with_capacity(self.pixels.len());
+        for pixel in &self.pixels {
+            out.push((u32::from(pixel.r) << 16) | (u32::from(pixel.g) << 8) | u32::from(pixel.b));
+        }
+        out
+    }
+
     pub fn to_ppm(&self) -> Vec<u8> {
         let mut out = format!("P6\n{} {}\n255\n", self.width, self.height).into_bytes();
         out.reserve(self.pixels.len() * 3);
