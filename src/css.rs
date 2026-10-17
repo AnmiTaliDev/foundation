@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::calc::{self, Linear};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
@@ -40,6 +42,12 @@ pub enum Value {
     Em(f32),
     Percent(f32),
     Number(f32),
+    Rem(f32),
+    Vw(f32),
+    Vh(f32),
+    Vmin(f32),
+    Vmax(f32),
+    Calc(Linear),
     Color(Color),
 }
 
@@ -70,6 +78,16 @@ const BOX_SHORTHANDS: [(&str, [&str; 4]); 3] = [
     ("margin", MARGIN_PROPERTIES),
     ("padding", PADDING_PROPERTIES),
     ("border-width", BORDER_WIDTH_PROPERTIES),
+];
+
+const FONT_SIZE_KEYWORDS: [(&str, f32); 7] = [
+    ("xx-small", 9.0),
+    ("x-small", 10.0),
+    ("small", 13.0),
+    ("medium", 16.0),
+    ("large", 18.0),
+    ("x-large", 24.0),
+    ("xx-large", 32.0),
 ];
 
 const NAMED_COLORS: [(&str, Color); 16] = [
@@ -309,6 +327,17 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "border" {
         return expand_border(value);
     }
+    if name == "font" {
+        return expand_font(value);
+    }
+    if name == "background" {
+        return expand_background(value);
+    }
+    if name == "font-size" {
+        if let Some(size) = parse_font_size(value) {
+            return vec![Declaration { name, value: size }];
+        }
+    }
 
     for (shorthand, longhands) in BOX_SHORTHANDS {
         if name == shorthand {
@@ -322,9 +351,117 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     }
 }
 
+fn split_values(text: &str) -> Vec<&str> {
+    let mut values = Vec::new();
+    let mut depth = 0usize;
+    let mut start: Option<usize> = None;
+    for (index, c) in text.char_indices() {
+        if c.is_whitespace() && depth == 0 {
+            if let Some(begin) = start.take() {
+                values.push(&text[begin..index]);
+            }
+            continue;
+        }
+        if c == '(' {
+            depth += 1;
+        } else if c == ')' {
+            depth = depth.saturating_sub(1);
+        }
+        if start.is_none() {
+            start = Some(index);
+        }
+    }
+    if let Some(begin) = start {
+        values.push(&text[begin..]);
+    }
+    values
+}
+
+fn expand_background(text: &str) -> Vec<Declaration> {
+    let mut declarations = Vec::new();
+    for token in split_values(text) {
+        if let Some(Value::Color(color)) = parse_value(token) {
+            declarations.push(Declaration {
+                name: "background-color".to_string(),
+                value: Value::Color(color),
+            });
+        }
+    }
+    declarations
+}
+
+fn parse_font_size(text: &str) -> Option<Value> {
+    let lower = text.to_ascii_lowercase();
+    for (keyword, size) in FONT_SIZE_KEYWORDS {
+        if lower == keyword {
+            return Some(Value::Length(size));
+        }
+    }
+    match parse_value(text)? {
+        size @ (Value::Length(_)
+        | Value::Em(_)
+        | Value::Percent(_)
+        | Value::Rem(_)
+        | Value::Vw(_)
+        | Value::Vh(_)
+        | Value::Vmin(_)
+        | Value::Vmax(_)
+        | Value::Calc(_)) => Some(size),
+        _ => None,
+    }
+}
+
+fn expand_font(text: &str) -> Vec<Declaration> {
+    let tokens = split_values(text);
+    for (index, token) in tokens.iter().enumerate() {
+        let (size_text, mut line_height_text) = match token.split_once('/') {
+            Some((size, line_height)) => (size, Some(line_height)),
+            None => (*token, None),
+        };
+        let Some(size) = parse_font_size(size_text) else {
+            continue;
+        };
+        if line_height_text.is_none() && tokens.get(index + 1) == Some(&"/") {
+            line_height_text = tokens.get(index + 2).copied();
+        }
+        let line_height = match line_height_text {
+            Some(line_height) => match parse_value(line_height) {
+                Some(value) => value,
+                None => return Vec::new(),
+            },
+            None => Value::Keyword("normal".to_string()),
+        };
+        return vec![
+            Declaration {
+                name: "font-size".to_string(),
+                value: size,
+            },
+            Declaration {
+                name: "line-height".to_string(),
+                value: line_height,
+            },
+        ];
+    }
+    Vec::new()
+}
+
+fn parse_light_dark(text: &str) -> Option<Value> {
+    let inner = text.strip_prefix("light-dark(")?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    for (index, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return parse_value(inner[..index].trim()),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn expand_border(text: &str) -> Vec<Declaration> {
     let mut declarations = Vec::new();
-    for token in text.split_whitespace() {
+    for token in split_values(text) {
         match parse_value(token) {
             Some(Value::Color(color)) => declarations.push(Declaration {
                 name: "border-color".to_string(),
@@ -354,7 +491,7 @@ fn push_border_widths(declarations: &mut Vec<Declaration>, width: Value) {
 
 fn expand_box_shorthand(longhands: &[&str; 4], text: &str) -> Vec<Declaration> {
     let mut values = Vec::new();
-    for token in text.split_whitespace() {
+    for token in split_values(text) {
         match parse_value(token) {
             Some(value) => values.push(value),
             None => return Vec::new(),
@@ -399,6 +536,16 @@ fn expand_box_shorthand(longhands: &[&str; 4], text: &str) -> Vec<Declaration> {
 
 fn parse_value(text: &str) -> Option<Value> {
     let first = text.chars().next()?;
+    if text.starts_with("calc(") {
+        let linear = calc::parse_calc(text)?;
+        if linear.is_px_only() {
+            return Some(Value::Length(linear.px));
+        }
+        return Some(Value::Calc(linear));
+    }
+    if text.starts_with("light-dark(") {
+        return parse_light_dark(text);
+    }
     if first == '#' {
         return parse_hex_color(&text[1..]).map(Value::Color);
     }
@@ -425,8 +572,23 @@ fn parse_dimension(text: &str) -> Option<Value> {
     if let Some(number) = text.strip_suffix("px") {
         return parse_number(number).map(Value::Length);
     }
+    if let Some(number) = text.strip_suffix("rem") {
+        return parse_number(number).map(Value::Rem);
+    }
     if let Some(number) = text.strip_suffix("em") {
         return parse_number(number).map(Value::Em);
+    }
+    if let Some(number) = text.strip_suffix("vmin") {
+        return parse_number(number).map(Value::Vmin);
+    }
+    if let Some(number) = text.strip_suffix("vmax") {
+        return parse_number(number).map(Value::Vmax);
+    }
+    if let Some(number) = text.strip_suffix("vw") {
+        return parse_number(number).map(Value::Vw);
+    }
+    if let Some(number) = text.strip_suffix("vh") {
+        return parse_number(number).map(Value::Vh);
     }
     if let Some(number) = text.strip_suffix('%') {
         return parse_number(number).map(Value::Percent);

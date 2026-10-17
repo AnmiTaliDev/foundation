@@ -88,7 +88,8 @@ impl Page {
     }
 
     pub fn render(&self, width: usize, height: usize, scroll_y: f32) -> Frame {
-        match style::style_tree(&self.document, &self.stylesheet) {
+        let viewport = style::Viewport::new(width as f32, height as f32);
+        match style::style_tree(&self.document, &self.stylesheet, viewport) {
             Some(styled_root) => {
                 let layout_root =
                     layout::layout_tree(&styled_root, width as f32, &self.font, &self.images);

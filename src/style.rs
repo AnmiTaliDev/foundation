@@ -116,13 +116,39 @@ pub fn stylesheet_for_document(root: &Node) -> Stylesheet {
     build_stylesheet(&author_css)
 }
 
-pub fn style_tree<'a>(root: &'a Node, stylesheet: &Stylesheet) -> Option<StyledNode<'a>> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Viewport {
+    pub fn new(width: f32, height: f32) -> Viewport {
+        Viewport { width, height }
+    }
+}
+
+struct StyleContext<'s> {
+    stylesheet: &'s Stylesheet,
+    viewport: Viewport,
+}
+
+pub fn style_tree<'a>(
+    root: &'a Node,
+    stylesheet: &Stylesheet,
+    viewport: Viewport,
+) -> Option<StyledNode<'a>> {
+    let context = StyleContext {
+        stylesheet,
+        viewport,
+    };
     match &root.node_type {
         NodeType::Element(_) => Some(style_node(
             root,
-            stylesheet,
+            &context,
             &PropertyMap::new(),
             &mut Vec::new(),
+            DEFAULT_FONT_SIZE,
         )),
         NodeType::Text(_) => None,
     }
@@ -130,9 +156,10 @@ pub fn style_tree<'a>(root: &'a Node, stylesheet: &Stylesheet) -> Option<StyledN
 
 fn style_node<'a>(
     node: &'a Node,
-    stylesheet: &Stylesheet,
+    context: &StyleContext,
     parent: &PropertyMap,
     ancestors: &mut Vec<&'a ElementData>,
+    root_font_size: f32,
 ) -> StyledNode<'a> {
     let mut inherited = PropertyMap::new();
     for name in INHERITED_PROPERTIES {
@@ -147,13 +174,25 @@ fn style_node<'a>(
             children: Vec::new(),
         },
         NodeType::Element(element) => {
-            let mut values = specified_values(element, ancestors, stylesheet, inherited);
+            let mut values = specified_values(element, ancestors, context.stylesheet, inherited);
+            resolve_viewport_units(&mut values, context.viewport, root_font_size);
             resolve_font_size(&mut values, parent);
             resolve_line_height(&mut values);
+            let children_root_font_size = if ancestors.is_empty() {
+                font_size_of(&values)
+            } else {
+                root_font_size
+            };
             ancestors.push(element);
             let mut children = Vec::new();
             for child in &node.children {
-                children.push(style_node(child, stylesheet, &values, ancestors));
+                children.push(style_node(
+                    child,
+                    context,
+                    &values,
+                    ancestors,
+                    children_root_font_size,
+                ));
             }
             ancestors.pop();
             StyledNode {
@@ -165,15 +204,48 @@ fn style_node<'a>(
     }
 }
 
-fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
-    let parent_size = match parent.get("font-size") {
+fn font_size_of(values: &PropertyMap) -> f32 {
+    match values.get("font-size") {
         Some(Value::Length(px)) => *px,
         _ => DEFAULT_FONT_SIZE,
-    };
+    }
+}
+
+fn resolve_viewport_units(values: &mut PropertyMap, viewport: Viewport, root_font_size: f32) {
+    for value in values.values_mut() {
+        let resolved = match value {
+            Value::Rem(rem) => Some(Value::Length(*rem * root_font_size)),
+            Value::Vw(vw) => Some(Value::Length(*vw * viewport.width / 100.0)),
+            Value::Vh(vh) => Some(Value::Length(*vh * viewport.height / 100.0)),
+            Value::Vmin(vmin) => Some(Value::Length(
+                *vmin * viewport.width.min(viewport.height) / 100.0,
+            )),
+            Value::Vmax(vmax) => Some(Value::Length(
+                *vmax * viewport.width.max(viewport.height) / 100.0,
+            )),
+            Value::Calc(linear) => {
+                let folded = linear.fold_viewport(root_font_size, viewport.width, viewport.height);
+                if folded.is_px_only() {
+                    Some(Value::Length(folded.px))
+                } else {
+                    Some(Value::Calc(folded))
+                }
+            }
+            _ => None,
+        };
+        if let Some(resolved) = resolved {
+            *value = resolved;
+        }
+    }
+}
+
+fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
+    let parent_size = font_size_of(parent);
     let resolved = match values.get("font-size") {
         Some(Value::Length(px)) => Some(*px),
         Some(Value::Em(em)) => Some(em * parent_size),
         Some(Value::Percent(percent)) => Some(percent / 100.0 * parent_size),
+        Some(Value::Calc(linear)) => linear.resolve(parent_size, Some(parent_size)),
         _ => None,
     };
     match resolved {
@@ -183,13 +255,11 @@ fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
 }
 
 fn resolve_line_height(values: &mut PropertyMap) {
-    let font_size = match values.get("font-size") {
-        Some(Value::Length(px)) => *px,
-        _ => DEFAULT_FONT_SIZE,
-    };
+    let font_size = font_size_of(values);
     let resolved = match values.get("line-height") {
         Some(Value::Em(em)) => Some(em * font_size),
         Some(Value::Percent(percent)) => Some(percent / 100.0 * font_size),
+        Some(Value::Calc(linear)) => linear.resolve(font_size, Some(font_size)),
         _ => None,
     };
     if let Some(px) = resolved {
@@ -329,7 +399,7 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn background(&self) -> Option<Color> {
-        self.color("background-color").or(self.color("background"))
+        self.color("background-color")
     }
 
     pub fn text_color(&self) -> Color {
@@ -346,6 +416,7 @@ impl<'a> StyledNode<'a> {
             Some(Value::Length(px)) => Some(*px),
             Some(Value::Em(em)) => Some(em * self.font_size()),
             Some(Value::Percent(percent)) => percent_base.map(|base| percent / 100.0 * base),
+            Some(Value::Calc(linear)) => linear.resolve(self.font_size(), percent_base),
             Some(Value::Keyword(keyword)) if keyword == "auto" => None,
             _ => default,
         }

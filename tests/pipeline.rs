@@ -91,7 +91,7 @@ fn style_applies_specificity_and_source_order() {
         "<html><style>p { width: 1px; } .c { width: 2px; } p { height: 3px; } #i { width: 4px; }</style><p class=\"c\" id=\"i\"></p><p class=\"c\"></p></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let with_id = &styled.children[1];
     let without_id = &styled.children[2];
     assert_eq!(with_id.value("width"), Some(&Value::Length(4.0)));
@@ -105,7 +105,7 @@ fn layout_fills_container_width_with_auto() {
         "<html><style>body { margin: 0 } div { margin: 10px; height: 5px; }</style><body><div></div></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         100.0,
@@ -125,7 +125,7 @@ fn layout_centers_with_auto_margins() {
         "<html><style>body { margin: 0 } div { width: 50px; margin-left: auto; margin-right: auto; }</style><body><div></div></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         100.0,
@@ -143,7 +143,7 @@ fn layout_skips_display_none() {
         "<html><style>body { margin: 0 } .h { display: none; height: 50px } .v { height: 7px }</style><body><div class=\"h\"></div><div class=\"v\"></div></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         100.0,
@@ -216,7 +216,7 @@ fn inline_runs_share_a_line_and_respect_spaces() {
         "<html><style>body { margin: 0 }</style><body><p>a<b>b</b> c</p></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let font = text::default_font();
     let layout_root = layout::layout_tree(&styled, 500.0, &font, &layout::ImageMap::new());
     let anonymous = first_anonymous(&layout_root).unwrap();
@@ -235,7 +235,7 @@ fn text_wraps_at_container_width() {
         "<html><style>body { margin: 0 }</style><body><p>one two three four five six</p></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let font = text::default_font();
     let wide = layout::layout_tree(&styled, 1000.0, &font, &layout::ImageMap::new());
     let narrow = layout::layout_tree(&styled, 60.0, &font, &layout::ImageMap::new());
@@ -257,7 +257,7 @@ fn text_inherits_color_and_size() {
         "<html><style>body { margin: 0; color: red; font-size: 40px }</style><body><span>I</span></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         200.0,
@@ -295,7 +295,7 @@ fn render_draws_text_pixels() {
 fn styled_value(source: &str, tag: &str, property: &str) -> Option<Value> {
     let root = html::parse(source);
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     find_value(&styled, tag, property)
 }
 
@@ -412,7 +412,7 @@ fn em_and_percent_resolve_in_layout() {
         "<html><style>body { margin: 0; font-size: 20px } div { width: 50%; margin-left: 1.5em; padding-top: 10%; height: 2em }</style><body><div></div></body></html>",
     );
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         200.0,
@@ -465,7 +465,7 @@ fn page_render_scrolls_and_clamps() {
 fn with_layout(source: &str, width: f32, check: impl FnOnce(&layout::LayoutBox)) {
     let root = html::parse(source);
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         width,
@@ -615,7 +615,7 @@ fn inline_background_covers_words_and_gap() {
     let source = "<html><style>body { margin: 0 } span { background-color: lime }</style><body>x <span>ab cd</span></body></html>";
     let root = html::parse(source);
     let sheet = style::stylesheet_for_document(&root);
-    let styled = style::style_tree(&root, &sheet).unwrap();
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
         200.0,
