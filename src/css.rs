@@ -16,6 +16,13 @@ pub struct Selector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
+    pub parent: Option<(Combinator, Box<Selector>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Combinator {
+    Descendant,
+    Child,
 }
 
 pub type Specificity = (usize, usize, usize);
@@ -30,6 +37,8 @@ pub struct Declaration {
 pub enum Value {
     Keyword(String),
     Length(f32),
+    Em(f32),
+    Percent(f32),
     Color(Color),
 }
 
@@ -40,29 +49,26 @@ pub struct Color {
     pub b: u8,
 }
 
+const MARGIN_PROPERTIES: [&str; 4] = ["margin-top", "margin-right", "margin-bottom", "margin-left"];
+
+const PADDING_PROPERTIES: [&str; 4] = [
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+];
+
+const BORDER_WIDTH_PROPERTIES: [&str; 4] = [
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+];
+
 const BOX_SHORTHANDS: [(&str, [&str; 4]); 3] = [
-    (
-        "margin",
-        ["margin-top", "margin-right", "margin-bottom", "margin-left"],
-    ),
-    (
-        "padding",
-        [
-            "padding-top",
-            "padding-right",
-            "padding-bottom",
-            "padding-left",
-        ],
-    ),
-    (
-        "border-width",
-        [
-            "border-top-width",
-            "border-right-width",
-            "border-bottom-width",
-            "border-left-width",
-        ],
-    ),
+    ("margin", MARGIN_PROPERTIES),
+    ("padding", PADDING_PROPERTIES),
+    ("border-width", BORDER_WIDTH_PROPERTIES),
 ];
 
 const NAMED_COLORS: [(&str, Color); 16] = [
@@ -149,11 +155,18 @@ const NAMED_COLORS: [(&str, Color); 16] = [
 
 impl Selector {
     pub fn specificity(&self) -> Specificity {
-        (
+        let mut specificity = (
             usize::from(self.id.is_some()),
             self.classes.len(),
             usize::from(self.tag_name.is_some()),
-        )
+        );
+        if let Some((_, parent)) = &self.parent {
+            let (ids, classes, tags) = parent.specificity();
+            specificity.0 += ids;
+            specificity.1 += classes;
+            specificity.2 += tags;
+        }
+        specificity
     }
 }
 
@@ -196,14 +209,18 @@ fn parse_rule(selector_text: &str, block: &str) -> Option<Rule> {
     for part in selector_text.split(',') {
         selectors.push(parse_selector(part.trim())?);
     }
+    Some(Rule {
+        selectors,
+        declarations: parse_declarations(block),
+    })
+}
+
+pub fn parse_declarations(block: &str) -> Vec<Declaration> {
     let mut declarations = Vec::new();
     for item in block.split(';') {
         declarations.extend(parse_declaration(item));
     }
-    Some(Rule {
-        selectors,
-        declarations,
-    })
+    declarations
 }
 
 fn is_ident_char(c: char) -> bool {
@@ -216,13 +233,36 @@ fn take_ident(text: &str) -> &str {
 }
 
 fn parse_selector(text: &str) -> Option<Selector> {
-    if text.is_empty() {
+    let spaced = text.replace('>', " > ");
+    let mut result: Option<Selector> = None;
+    let mut combinator: Option<Combinator> = None;
+    for token in spaced.split_whitespace() {
+        if token == ">" {
+            if result.is_none() || combinator.is_some() {
+                return None;
+            }
+            combinator = Some(Combinator::Child);
+            continue;
+        }
+        let mut compound = parse_compound(token)?;
+        if let Some(left) = result {
+            let kind = combinator.take().unwrap_or(Combinator::Descendant);
+            compound.parent = Some((kind, Box::new(left)));
+        }
+        result = Some(compound);
+    }
+    if combinator.is_some() {
         return None;
     }
+    result
+}
+
+fn parse_compound(text: &str) -> Option<Selector> {
     let mut selector = Selector {
         tag_name: None,
         id: None,
         classes: Vec::new(),
+        parent: None,
     };
     let mut rest = text;
     if let Some(after_star) = rest.strip_prefix('*') {
@@ -265,6 +305,10 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     }
     let value = value.trim();
 
+    if name == "border" {
+        return expand_border(value);
+    }
+
     for (shorthand, longhands) in BOX_SHORTHANDS {
         if name == shorthand {
             return expand_box_shorthand(&longhands, value);
@@ -274,6 +318,36 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     match parse_value(value) {
         Some(value) => vec![Declaration { name, value }],
         None => Vec::new(),
+    }
+}
+
+fn expand_border(text: &str) -> Vec<Declaration> {
+    let mut declarations = Vec::new();
+    for token in text.split_whitespace() {
+        match parse_value(token) {
+            Some(Value::Color(color)) => declarations.push(Declaration {
+                name: "border-color".to_string(),
+                value: Value::Color(color),
+            }),
+            Some(width @ (Value::Length(_) | Value::Em(_))) => {
+                push_border_widths(&mut declarations, width);
+            }
+            Some(Value::Keyword(keyword)) if keyword == "none" => {
+                push_border_widths(&mut declarations, Value::Length(0.0));
+            }
+            Some(Value::Keyword(_)) => {}
+            _ => return Vec::new(),
+        }
+    }
+    declarations
+}
+
+fn push_border_widths(declarations: &mut Vec<Declaration>, width: Value) {
+    for name in BORDER_WIDTH_PROPERTIES {
+        declarations.push(Declaration {
+            name: name.to_string(),
+            value: width.clone(),
+        });
     }
 }
 
@@ -328,7 +402,7 @@ fn parse_value(text: &str) -> Option<Value> {
         return parse_hex_color(&text[1..]).map(Value::Color);
     }
     if first.is_ascii_digit() || first == '.' || first == '-' {
-        return parse_length(text).map(Value::Length);
+        return parse_dimension(text);
     }
     if text.chars().all(is_ident_char) {
         let keyword = text.to_ascii_lowercase();
@@ -342,12 +416,18 @@ fn parse_value(text: &str) -> Option<Value> {
     None
 }
 
-fn parse_length(text: &str) -> Option<f32> {
+fn parse_dimension(text: &str) -> Option<Value> {
     if let Some(number) = text.strip_suffix("px") {
-        return number.parse().ok();
+        return number.parse().ok().map(Value::Length);
+    }
+    if let Some(number) = text.strip_suffix("em") {
+        return number.parse().ok().map(Value::Em);
+    }
+    if let Some(number) = text.strip_suffix('%') {
+        return number.parse().ok().map(Value::Percent);
     }
     match text.parse::<f32>() {
-        Ok(0.0) => Some(0.0),
+        Ok(0.0) => Some(Value::Length(0.0)),
         _ => None,
     }
 }

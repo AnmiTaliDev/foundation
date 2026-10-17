@@ -164,14 +164,15 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn calculate_width(&mut self, style: &StyledNode, containing: &Dimensions) {
-        let width = style.length_or_auto("width", None);
-        let mut margin_left = style.length_or_auto("margin-left", Some(0.0));
-        let mut margin_right = style.length_or_auto("margin-right", Some(0.0));
+        let base = containing.content.width;
+        let width = style.length_or_auto("width", None, Some(base));
+        let mut margin_left = style.length_or_auto("margin-left", Some(0.0), Some(base));
+        let mut margin_right = style.length_or_auto("margin-right", Some(0.0), Some(base));
 
-        let border_left = style.px("border-left-width");
-        let border_right = style.px("border-right-width");
-        let padding_left = style.px("padding-left");
-        let padding_right = style.px("padding-right");
+        let border_left = style.px("border-left-width", base);
+        let border_right = style.px("border-right-width", base);
+        let padding_left = style.px("padding-left", base);
+        let padding_right = style.px("padding-right", base);
 
         let total = border_left
             + border_right
@@ -215,14 +216,15 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn calculate_position(&mut self, style: &StyledNode, containing: &Dimensions) {
+        let base = containing.content.width;
         let d = &mut self.dimensions;
 
-        d.margin.top = style.px("margin-top");
-        d.margin.bottom = style.px("margin-bottom");
-        d.border.top = style.px("border-top-width");
-        d.border.bottom = style.px("border-bottom-width");
-        d.padding.top = style.px("padding-top");
-        d.padding.bottom = style.px("padding-bottom");
+        d.margin.top = style.px("margin-top", base);
+        d.margin.bottom = style.px("margin-bottom", base);
+        d.border.top = style.px("border-top-width", base);
+        d.border.bottom = style.px("border-bottom-width", base);
+        d.padding.top = style.px("padding-top", base);
+        d.padding.bottom = style.px("padding-bottom", base);
 
         d.content.x = containing.content.x + d.margin.left + d.border.left + d.padding.left;
         d.content.y = containing.content.y
@@ -240,7 +242,7 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn calculate_height(&mut self, style: &StyledNode) {
-        if let Some(height) = style.length_or_auto("height", None) {
+        if let Some(height) = style.length_or_auto("height", None, None) {
             self.dimensions.content.height = height;
         }
     }

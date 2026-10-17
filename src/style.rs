@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::css::{self, Color, Rule, Selector, Specificity, Stylesheet, Value};
+use crate::css::{self, Color, Combinator, Rule, Selector, Specificity, Stylesheet, Value};
 use crate::dom::{ElementData, Node, NodeType};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -67,12 +67,22 @@ fn collect_style_text(node: &Node, out: &mut String) {
 
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &Stylesheet) -> Option<StyledNode<'a>> {
     match &root.node_type {
-        NodeType::Element(_) => Some(style_node(root, stylesheet, &PropertyMap::new())),
+        NodeType::Element(_) => Some(style_node(
+            root,
+            stylesheet,
+            &PropertyMap::new(),
+            &mut Vec::new(),
+        )),
         NodeType::Text(_) => None,
     }
 }
 
-fn style_node<'a>(node: &'a Node, stylesheet: &Stylesheet, parent: &PropertyMap) -> StyledNode<'a> {
+fn style_node<'a>(
+    node: &'a Node,
+    stylesheet: &Stylesheet,
+    parent: &PropertyMap,
+    ancestors: &mut Vec<&'a ElementData>,
+) -> StyledNode<'a> {
     let mut inherited = PropertyMap::new();
     for name in INHERITED_PROPERTIES {
         if let Some(value) = parent.get(name) {
@@ -86,11 +96,14 @@ fn style_node<'a>(node: &'a Node, stylesheet: &Stylesheet, parent: &PropertyMap)
             children: Vec::new(),
         },
         NodeType::Element(element) => {
-            let values = specified_values(element, stylesheet, inherited);
+            let mut values = specified_values(element, ancestors, stylesheet, inherited);
+            resolve_font_size(&mut values, parent);
+            ancestors.push(element);
             let mut children = Vec::new();
             for child in &node.children {
-                children.push(style_node(child, stylesheet, &values));
+                children.push(style_node(child, stylesheet, &values, ancestors));
             }
+            ancestors.pop();
             StyledNode {
                 content: Content::Element(element),
                 specified_values: values,
@@ -100,14 +113,32 @@ fn style_node<'a>(node: &'a Node, stylesheet: &Stylesheet, parent: &PropertyMap)
     }
 }
 
+fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
+    let parent_size = match parent.get("font-size") {
+        Some(Value::Length(px)) => *px,
+        _ => DEFAULT_FONT_SIZE,
+    };
+    let resolved = match values.get("font-size") {
+        Some(Value::Length(px)) => Some(*px),
+        Some(Value::Em(em)) => Some(em * parent_size),
+        Some(Value::Percent(percent)) => Some(percent / 100.0 * parent_size),
+        _ => None,
+    };
+    match resolved {
+        Some(px) => values.insert("font-size".to_string(), Value::Length(px)),
+        None => values.remove("font-size"),
+    };
+}
+
 fn specified_values(
     element: &ElementData,
+    ancestors: &[&ElementData],
     stylesheet: &Stylesheet,
     inherited: PropertyMap,
 ) -> PropertyMap {
     let mut matched: Vec<(Specificity, &Rule)> = Vec::new();
     for rule in &stylesheet.rules {
-        if let Some(specificity) = match_rule(element, rule) {
+        if let Some(specificity) = match_rule(element, ancestors, rule) {
             matched.push((specificity, rule));
         }
     }
@@ -119,13 +150,22 @@ fn specified_values(
             values.insert(declaration.name.clone(), declaration.value.clone());
         }
     }
+    if let Some(inline) = element.attributes.get("style") {
+        for declaration in css::parse_declarations(inline) {
+            values.insert(declaration.name, declaration.value);
+        }
+    }
     values
 }
 
-fn match_rule(element: &ElementData, rule: &Rule) -> Option<Specificity> {
+fn match_rule(
+    element: &ElementData,
+    ancestors: &[&ElementData],
+    rule: &Rule,
+) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in &rule.selectors {
-        if matches(element, selector) {
+        if matches_selector(element, ancestors, selector) {
             let specificity = selector.specificity();
             if best.is_none_or(|current| specificity > current) {
                 best = Some(specificity);
@@ -135,7 +175,34 @@ fn match_rule(element: &ElementData, rule: &Rule) -> Option<Specificity> {
     best
 }
 
-fn matches(element: &ElementData, selector: &Selector) -> bool {
+fn matches_selector(
+    element: &ElementData,
+    ancestors: &[&ElementData],
+    selector: &Selector,
+) -> bool {
+    if !matches_compound(element, selector) {
+        return false;
+    }
+    match &selector.parent {
+        None => true,
+        Some((Combinator::Child, parent)) => match ancestors.split_last() {
+            Some((nearest, rest)) => matches_selector(nearest, rest, parent),
+            None => false,
+        },
+        Some((Combinator::Descendant, parent)) => {
+            let mut end = ancestors.len();
+            while end > 0 {
+                end -= 1;
+                if matches_selector(ancestors[end], &ancestors[..end], parent) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+fn matches_compound(element: &ElementData, selector: &Selector) -> bool {
     if let Some(tag_name) = &selector.tag_name {
         if *tag_name != element.tag_name {
             return false;
@@ -172,24 +239,34 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn font_size(&self) -> f32 {
-        self.length_or_auto("font-size", Some(DEFAULT_FONT_SIZE))
-            .unwrap_or(DEFAULT_FONT_SIZE)
+        match self.value("font-size") {
+            Some(Value::Length(px)) => *px,
+            _ => DEFAULT_FONT_SIZE,
+        }
     }
 
     pub fn text_color(&self) -> Color {
         self.color("color").unwrap_or(BLACK)
     }
 
-    pub fn length_or_auto(&self, name: &str, default: Option<f32>) -> Option<f32> {
+    pub fn length_or_auto(
+        &self,
+        name: &str,
+        default: Option<f32>,
+        percent_base: Option<f32>,
+    ) -> Option<f32> {
         match self.value(name) {
             Some(Value::Length(px)) => Some(*px),
+            Some(Value::Em(em)) => Some(em * self.font_size()),
+            Some(Value::Percent(percent)) => percent_base.map(|base| percent / 100.0 * base),
             Some(Value::Keyword(keyword)) if keyword == "auto" => None,
             _ => default,
         }
     }
 
-    pub fn px(&self, name: &str) -> f32 {
-        self.length_or_auto(name, Some(0.0)).unwrap_or(0.0)
+    pub fn px(&self, name: &str, percent_base: f32) -> f32 {
+        self.length_or_auto(name, Some(0.0), Some(percent_base))
+            .unwrap_or(0.0)
     }
 
     pub fn color(&self, name: &str) -> Option<Color> {

@@ -2,6 +2,7 @@
 
 pub mod css;
 pub mod dom;
+pub mod entities;
 pub mod html;
 pub mod inline;
 pub mod layout;

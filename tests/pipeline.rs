@@ -2,7 +2,7 @@
 
 use foundation::css::{self, Color, Value};
 use foundation::dom::NodeType;
-use foundation::{html, layout, render, style, text};
+use foundation::{entities, html, layout, render, style, text};
 
 const RED: Color = Color { r: 255, g: 0, b: 0 };
 const GREEN: Color = Color { r: 0, g: 255, b: 0 };
@@ -56,7 +56,7 @@ fn html_tolerates_unclosed_and_stray_tags() {
 #[test]
 fn css_parses_selectors_and_expands_shorthand() {
     let sheet = css::parse(
-        "div.a#b, p { margin: 1px 2px; color: #fff; } /* c */ span { width: 10px } a > b { color: red }",
+        "div.a#b, p { margin: 1px 2px; color: #fff; } /* c */ span { width: 10px } a:hover { color: red }",
     );
     assert_eq!(sheet.rules.len(), 2);
     let first = &sheet.rules[0];
@@ -270,4 +270,146 @@ fn render_draws_text_pixels() {
     }
     assert!(dark > 20);
     assert_eq!(outside, 0);
+}
+
+fn styled_value(source: &str, tag: &str, property: &str) -> Option<Value> {
+    let root = html::parse(source);
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    find_value(&styled, tag, property)
+}
+
+fn find_value(node: &style::StyledNode, tag: &str, property: &str) -> Option<Value> {
+    if let style::Content::Element(element) = node.content {
+        if element.tag_name == tag {
+            return node.value(property).cloned();
+        }
+    }
+    for child in &node.children {
+        if let Some(value) = find_value(child, tag, property) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+#[test]
+fn entities_decode_named_and_numeric() {
+    assert_eq!(
+        entities::decode("a &amp; b &lt;c&gt; &quot;d&quot;"),
+        "a & b <c> \"d\""
+    );
+    assert_eq!(entities::decode("&#65;&#x42;&#X43;"), "ABC");
+    assert_eq!(
+        entities::decode("&unknown; &amp &#xZZ; &;"),
+        "&unknown; &amp &#xZZ; &;"
+    );
+    assert_eq!(entities::decode("no entities"), "no entities");
+}
+
+#[test]
+fn html_decodes_entities_in_text_and_attributes() {
+    let root = html::parse("<p title=\"a &amp; b\">x &lt; y</p>");
+    let NodeType::Element(element) = &root.node_type else {
+        panic!("expected element");
+    };
+    assert_eq!(
+        element.attributes.get("title").map(String::as_str),
+        Some("a & b")
+    );
+    assert_eq!(
+        root.children[0].node_type,
+        NodeType::Text("x < y".to_string())
+    );
+}
+
+#[test]
+fn html_does_not_decode_entities_in_style() {
+    let root = html::parse("<style>a::after { content: \"&amp;\" }</style>");
+    assert_eq!(
+        root.children[0].node_type,
+        NodeType::Text("a::after { content: \"&amp;\" }".to_string())
+    );
+}
+
+#[test]
+fn style_attribute_overrides_rules() {
+    let source = "<html><style>#i { width: 10px; height: 4px }</style><p id=\"i\" style=\"width: 20px; color: red\"></p></html>";
+    assert_eq!(
+        styled_value(source, "p", "width"),
+        Some(Value::Length(20.0))
+    );
+    assert_eq!(
+        styled_value(source, "p", "height"),
+        Some(Value::Length(4.0))
+    );
+    assert_eq!(styled_value(source, "p", "color"), Some(Value::Color(RED)));
+}
+
+#[test]
+fn descendant_and_child_combinators_match_ancestors() {
+    let source = "<html><style>div p { width: 1px } div > span { width: 2px } div > b { width: 3px } body div p { height: 5px }</style><body><div><p></p><span></span><section><b></b><p id=\"deep\"></p></section></div></body></html>";
+    assert_eq!(styled_value(source, "p", "width"), Some(Value::Length(1.0)));
+    assert_eq!(
+        styled_value(source, "p", "height"),
+        Some(Value::Length(5.0))
+    );
+    assert_eq!(
+        styled_value(source, "span", "width"),
+        Some(Value::Length(2.0))
+    );
+    assert_eq!(styled_value(source, "b", "width"), None);
+}
+
+#[test]
+fn combinator_selectors_parse_and_sum_specificity() {
+    let sheet =
+        css::parse("div.a > p#b span { color: red } > p { color: red } div > { color: red }");
+    assert_eq!(sheet.rules.len(), 1);
+    assert_eq!(sheet.rules[0].selectors[0].specificity(), (1, 1, 3));
+}
+
+#[test]
+fn border_shorthand_sets_width_and_color() {
+    let sheet = css::parse("div { border: 2px solid red } p { border: none }");
+    let div = &sheet.rules[0].declarations;
+    assert_eq!(div.len(), 5);
+    assert!(div
+        .iter()
+        .any(|d| d.name == "border-color" && d.value == Value::Color(RED)));
+    assert!(div
+        .iter()
+        .filter(|d| d.name.ends_with("-width"))
+        .all(|d| d.value == Value::Length(2.0)));
+    let p = &sheet.rules[1].declarations;
+    assert_eq!(p.len(), 4);
+    assert!(p.iter().all(|d| d.value == Value::Length(0.0)));
+}
+
+#[test]
+fn em_and_percent_resolve_in_layout() {
+    let root = html::parse(
+        "<html><style>body { margin: 0; font-size: 20px } div { width: 50%; margin-left: 1.5em; padding-top: 10%; height: 2em }</style><body><div></div></body></html>",
+    );
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let div = &layout_root.children[0].children[0];
+    assert_eq!(div.dimensions.content.width, 100.0);
+    assert_eq!(div.dimensions.margin.left, 30.0);
+    assert_eq!(div.dimensions.padding.top, 20.0);
+    assert_eq!(div.dimensions.content.height, 40.0);
+}
+
+#[test]
+fn font_size_em_is_relative_to_parent() {
+    let source = "<html><style>body { font-size: 20px } div { font-size: 1.5em } p { font-size: 50% }</style><body><div><p></p></div></body></html>";
+    assert_eq!(
+        styled_value(source, "div", "font-size"),
+        Some(Value::Length(30.0))
+    );
+    assert_eq!(
+        styled_value(source, "p", "font-size"),
+        Some(Value::Length(15.0))
+    );
 }

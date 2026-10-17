@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::dom::{AttrMap, Node, NodeType};
+use crate::entities;
 
 const VOID_ELEMENTS: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
@@ -127,7 +128,7 @@ impl<'a> Parser<'a> {
         self.consume_while(is_not_tag_start);
         let text = &self.input[start..self.pos];
         if self.stack.len() > 1 || !text.trim().is_empty() {
-            self.append(Node::text(text.to_string()));
+            self.append(Node::text(entities::decode(text)));
         }
     }
 
@@ -206,9 +207,9 @@ impl<'a> Parser<'a> {
                     None => self.input.len(),
                 };
                 self.pos = (end + 1).min(self.input.len());
-                self.input[start..end].to_string()
+                entities::decode(&self.input[start..end])
             }
-            _ => self.consume_while(is_unquoted_value_char).to_string(),
+            _ => entities::decode(self.consume_while(is_unquoted_value_char)),
         }
     }
 
