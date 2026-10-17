@@ -413,3 +413,26 @@ fn font_size_em_is_relative_to_parent() {
         Some(Value::Length(15.0))
     );
 }
+
+#[test]
+fn page_render_scrolls_and_clamps() {
+    let page = foundation::Page::new(
+        "<html><style>body { margin: 0 } .a { height: 50px; background-color: red } .b { height: 50px; background-color: lime }</style><body><div class=\"a\"></div><div class=\"b\"></div></body></html>",
+    );
+    let top = page.render(10, 20, 0.0);
+    assert_eq!(top.content_height, 100.0);
+    assert_eq!(top.canvas.pixel(0, 0), RED);
+    assert_eq!(top.canvas.pixel(0, 19), RED);
+
+    let middle = page.render(10, 20, 40.0);
+    assert_eq!(middle.scroll_y, 40.0);
+    assert_eq!(middle.canvas.pixel(0, 9), RED);
+    assert_eq!(middle.canvas.pixel(0, 10), GREEN);
+
+    let bottom = page.render(10, 20, 1000.0);
+    assert_eq!(bottom.scroll_y, 80.0);
+    assert_eq!(bottom.canvas.pixel(0, 19), GREEN);
+
+    assert_eq!(page.render(10, 20, -5.0).scroll_y, 0.0);
+    assert_eq!(page.render(10, 200, 50.0).scroll_y, 0.0);
+}

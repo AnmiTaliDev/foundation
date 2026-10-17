@@ -27,7 +27,7 @@ Renders an HTML file to a PPM image. Default size is 800x600. Supported so far: 
 foundation-window <input.html>
 ```
 
-Opens a resizable window with the rendered page. Escape closes it.
+Opens a resizable window with the rendered page. Scroll with the mouse wheel, Up, Down, PageUp, PageDown, Home and End. Escape closes it.
 
 ## Acknowledgments
 

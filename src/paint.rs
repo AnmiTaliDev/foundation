@@ -122,14 +122,22 @@ fn blend_channel(background: u8, foreground: u8, coverage: u8) -> u8 {
         as u8
 }
 
-pub fn paint(root: &LayoutBox, width: usize, height: usize, font: &Font) -> Canvas {
+pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font: &Font) -> Canvas {
     let mut list = Vec::new();
     build_display_list(root, &mut list);
     let mut canvas = Canvas::new(width, height);
     for command in &list {
         match command {
-            DisplayCommand::Rect(item) => canvas.fill(item),
-            DisplayCommand::Text(fragment) => canvas.draw_text(fragment, font),
+            DisplayCommand::Rect(item) => {
+                let mut shifted = *item;
+                shifted.rect.y -= scroll_y;
+                canvas.fill(&shifted);
+            }
+            DisplayCommand::Text(fragment) => {
+                let mut shifted = fragment.clone();
+                shifted.baseline -= scroll_y;
+                canvas.draw_text(&shifted, font);
+            }
         }
     }
     canvas
