@@ -7,7 +7,7 @@ use crate::dom::{ElementData, Node, NodeType};
 
 pub const USER_AGENT_STYLESHEET: &str =
     "head, style, script, title, meta, link, base { display: none; } \
-    span, a, b, i, em, strong, code, small, u, label, mark, abbr, cite, kbd, samp, var, del, ins, s, q, sub, sup, time { display: inline; } \
+    span, a, b, i, em, strong, code, small, u, label, img, mark, abbr, cite, kbd, samp, var, del, ins, s, q, sub, sup, time { display: inline; } \
     body { margin: 8px; } \
     h1 { font-size: 32px; } h2 { font-size: 24px; } h3 { font-size: 19px; } \
     p, h1, h2, h3 { margin-bottom: 12px; }";
@@ -47,29 +47,73 @@ pub struct StyledNode<'a> {
     pub children: Vec<StyledNode<'a>>,
 }
 
-pub fn stylesheet_for_document(root: &Node) -> Stylesheet {
-    let mut stylesheet = css::parse(USER_AGENT_STYLESHEET);
-    let mut author_css = String::new();
-    collect_style_text(root, &mut author_css);
-    stylesheet.rules.extend(css::parse(&author_css).rules);
-    stylesheet
+#[derive(Debug, Clone, PartialEq)]
+pub enum StyleSource {
+    Inline(String),
+    Link(String),
 }
 
-fn collect_style_text(node: &Node, out: &mut String) {
+pub fn style_sources(root: &Node) -> Vec<StyleSource> {
+    let mut sources = Vec::new();
+    collect_style_sources(root, &mut sources);
+    sources
+}
+
+fn collect_style_sources(node: &Node, sources: &mut Vec<StyleSource>) {
     if let NodeType::Element(element) = &node.node_type {
         if element.tag_name == "style" {
+            let mut text = String::new();
             for child in &node.children {
-                if let NodeType::Text(text) = &child.node_type {
-                    out.push_str(text);
-                    out.push('\n');
+                if let NodeType::Text(content) = &child.node_type {
+                    text.push_str(content);
+                    text.push('\n');
                 }
             }
+            sources.push(StyleSource::Inline(text));
             return;
+        }
+        if element.tag_name == "link" && is_stylesheet_link(element) {
+            if let Some(href) = element.attributes.get("href") {
+                sources.push(StyleSource::Link(href.clone()));
+            }
         }
     }
     for child in &node.children {
-        collect_style_text(child, out);
+        collect_style_sources(child, sources);
     }
+}
+
+fn is_stylesheet_link(element: &ElementData) -> bool {
+    let Some(rel) = element.attributes.get("rel") else {
+        return false;
+    };
+    let mut is_stylesheet = false;
+    for token in rel.split_whitespace() {
+        if token.eq_ignore_ascii_case("stylesheet") {
+            is_stylesheet = true;
+        }
+    }
+    let is_print = match element.attributes.get("media") {
+        Some(media) => media.trim().eq_ignore_ascii_case("print"),
+        None => false,
+    };
+    is_stylesheet && !is_print
+}
+
+pub fn build_stylesheet(author_css: &str) -> Stylesheet {
+    let mut stylesheet = css::parse(USER_AGENT_STYLESHEET);
+    stylesheet.rules.extend(css::parse(author_css).rules);
+    stylesheet
+}
+
+pub fn stylesheet_for_document(root: &Node) -> Stylesheet {
+    let mut author_css = String::new();
+    for source in style_sources(root) {
+        if let StyleSource::Inline(text) = source {
+            author_css.push_str(&text);
+        }
+    }
+    build_stylesheet(&author_css)
 }
 
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &Stylesheet) -> Option<StyledNode<'a>> {

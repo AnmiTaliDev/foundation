@@ -3,8 +3,9 @@
 use fontdue::Font;
 
 use crate::css::Color;
-use crate::inline::Fragment;
+use crate::inline::{Fragment, ImageFragment};
 use crate::layout::{BoxKind, LayoutBox, Rect};
+use crate::picture::Picture;
 
 const WHITE: Color = Color {
     r: 255,
@@ -22,6 +23,7 @@ pub struct SolidRect {
 pub enum DisplayCommand {
     Rect(SolidRect),
     Text(Fragment),
+    Image(ImageFragment),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +90,42 @@ impl Canvas {
         }
     }
 
+    fn draw_picture(&mut self, rect: &Rect, picture: &Picture) {
+        if rect.width <= 0.0 || rect.height <= 0.0 || picture.width == 0 || picture.height == 0 {
+            return;
+        }
+        let x_start = rect.x.round().clamp(0.0, self.width as f32) as usize;
+        let y_start = rect.y.round().clamp(0.0, self.height as f32) as usize;
+        let x_end = (rect.x + rect.width).round().clamp(0.0, self.width as f32) as usize;
+        let y_end = (rect.y + rect.height)
+            .round()
+            .clamp(0.0, self.height as f32) as usize;
+        let last_column = picture.width as usize - 1;
+        let last_row = picture.height as usize - 1;
+        for y in y_start..y_end {
+            let source_y = (((y as f32 + 0.5 - rect.y) / rect.height) * picture.height as f32)
+                .max(0.0) as usize;
+            let source_y = source_y.min(last_row);
+            for x in x_start..x_end {
+                let source_x = (((x as f32 + 0.5 - rect.x) / rect.width) * picture.width as f32)
+                    .max(0.0) as usize;
+                let source_x = source_x.min(last_column);
+                let offset = (source_y * picture.width as usize + source_x) * 4;
+                let alpha = picture.rgba[offset + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let color = Color {
+                    r: picture.rgba[offset],
+                    g: picture.rgba[offset + 1],
+                    b: picture.rgba[offset + 2],
+                };
+                let index = y * self.width + x;
+                self.pixels[index] = blend(self.pixels[index], color, alpha);
+            }
+        }
+    }
+
     pub fn to_argb(&self) -> Vec<u32> {
         let mut out = Vec::with_capacity(self.pixels.len());
         for pixel in &self.pixels {
@@ -138,6 +176,11 @@ pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font:
                 shifted.baseline -= scroll_y;
                 canvas.draw_text(&shifted, font);
             }
+            DisplayCommand::Image(image) => {
+                let mut rect = image.rect;
+                rect.y -= scroll_y;
+                canvas.draw_picture(&rect, &image.picture);
+            }
         }
     }
     canvas
@@ -151,6 +194,9 @@ fn build_display_list(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
             list.push(DisplayCommand::Rect(SolidRect { color, rect }));
         }
         list.push(DisplayCommand::Text(fragment.clone()));
+    }
+    for image in &layout_box.images {
+        list.push(DisplayCommand::Image(image.clone()));
     }
     for child in &layout_box.children {
         build_display_list(child, list);

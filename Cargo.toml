@@ -8,4 +8,6 @@ default-run = "foundation"
 
 [dependencies]
 fontdue = "0.9.4"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 minifb = "0.29.0"
+ureq = "3.4.2"

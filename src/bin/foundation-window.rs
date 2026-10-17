@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::env;
 use std::process::ExitCode;
-use std::{env, fs};
 
 use foundation::Page;
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
@@ -14,7 +14,7 @@ const WHEEL_SCROLL: f32 = 40.0;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        eprintln!("usage: foundation-window <input.html>");
+        eprintln!("usage: foundation-window <input.html|url>");
         return ExitCode::from(2);
     }
     match run(&args[1]) {
@@ -48,9 +48,10 @@ fn scroll_delta(window: &Window, height: usize) -> f32 {
 }
 
 fn run(path: &str) -> Result<(), String> {
-    let source =
-        fs::read_to_string(path).map_err(|error| format!("cannot read {}: {}", path, error))?;
-    let page = Page::new(&source);
+    let page = Page::open(path)?;
+    for warning in &page.warnings {
+        eprintln!("foundation-window: warning: {}", warning);
+    }
     let options = WindowOptions {
         resize: true,
         ..WindowOptions::default()

@@ -106,7 +106,12 @@ fn layout_fills_container_width_with_auto() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        100.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.x, 10.0);
     assert_eq!(div.dimensions.content.y, 10.0);
@@ -121,7 +126,12 @@ fn layout_centers_with_auto_margins() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        100.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.x, 25.0);
     assert_eq!(div.dimensions.content.width, 50.0);
@@ -134,7 +144,12 @@ fn layout_skips_display_none() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        100.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let body = &layout_root.children[0];
     assert_eq!(body.children.len(), 1);
     assert_eq!(body.dimensions.content.height, 7.0);
@@ -203,7 +218,7 @@ fn inline_runs_share_a_line_and_respect_spaces() {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
     let font = text::default_font();
-    let layout_root = layout::layout_tree(&styled, 500.0, &font);
+    let layout_root = layout::layout_tree(&styled, 500.0, &font, &layout::ImageMap::new());
     let anonymous = first_anonymous(&layout_root).unwrap();
     let fragments = &anonymous.fragments;
     assert_eq!(fragments.len(), 3);
@@ -222,8 +237,8 @@ fn text_wraps_at_container_width() {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
     let font = text::default_font();
-    let wide = layout::layout_tree(&styled, 1000.0, &font);
-    let narrow = layout::layout_tree(&styled, 60.0, &font);
+    let wide = layout::layout_tree(&styled, 1000.0, &font, &layout::ImageMap::new());
+    let narrow = layout::layout_tree(&styled, 60.0, &font, &layout::ImageMap::new());
     let wide_text = first_anonymous(&wide).unwrap();
     let narrow_text = first_anonymous(&narrow).unwrap();
     assert_eq!(
@@ -243,7 +258,12 @@ fn text_inherits_color_and_size() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        200.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let fragment = &first_anonymous(&layout_root).unwrap().fragments[0];
     assert_eq!(fragment.color, RED);
     assert_eq!(fragment.font_size, 40.0);
@@ -393,7 +413,12 @@ fn em_and_percent_resolve_in_layout() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        200.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.width, 100.0);
     assert_eq!(div.dimensions.margin.left, 30.0);
@@ -441,7 +466,12 @@ fn with_layout(source: &str, width: f32, check: impl FnOnce(&layout::LayoutBox))
     let root = html::parse(source);
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, width, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        width,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     check(&layout_root);
 }
 
@@ -586,7 +616,12 @@ fn inline_background_covers_words_and_gap() {
     let root = html::parse(source);
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let layout_root = layout::layout_tree(
+        &styled,
+        200.0,
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
     let fragments = &first_anonymous(&layout_root).unwrap().fragments;
     assert_eq!(fragments.len(), 3);
     assert!(fragments[0].background.is_none());
