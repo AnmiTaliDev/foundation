@@ -5,6 +5,7 @@ use std::rc::Rc;
 use fontdue::Font;
 
 use crate::css::Color;
+use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
 use crate::style::TextAlign;
@@ -188,22 +189,36 @@ fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, font: &Font) -> Vec<Word<'a>>
     fitted
 }
 
+pub fn max_content_width(content: &InlineContent, font: &Font) -> f32 {
+    let words = collect_words(&content.items);
+    let mut total = 0.0;
+    for word in &words {
+        if total > 0.0 && word.space_before {
+            total += text::text_width(font, " ", word.font_size());
+        }
+        total += word.width(font);
+    }
+    total
+}
+
 pub fn layout_lines(
     content: &InlineContent,
     width: f32,
     origin_x: f32,
     origin_y: f32,
     font: &Font,
+    floats: &FloatContext,
 ) -> Lines {
     let words = fit_words(collect_words(&content.items), width, font);
-    let area = Area {
+    let mut lines = Lines::default();
+    let mut line: Vec<PlacedWord> = Vec::new();
+    let mut area = Area {
         width,
         origin_x,
         origin_y,
     };
-    let mut lines = Lines::default();
-    let mut line: Vec<PlacedWord> = Vec::new();
     let mut x = 0.0;
+    let mut top = 0.0;
 
     for word in &words {
         let word_width = word.width(font);
@@ -211,13 +226,24 @@ pub fn layout_lines(
         if x > 0.0 && word.space_before {
             space = text::text_width(font, " ", word.font_size());
         }
-        let overflows = x + space + word_width > width;
+        let overflows = x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
-            let height = finish_line(&line, content.align, &area, lines.height, font, &mut lines);
-            lines.height += height;
+            top += finish_line(&line, content.align, &area, top, font, &mut lines);
             line.clear();
             x = 0.0;
             space = 0.0;
+        }
+        if line.is_empty() {
+            loop {
+                let y = origin_y + top;
+                let (left, right) = floats.bounds_at(y, origin_x, origin_x + width);
+                if word_width <= right - left || !floats.is_blocked_at(y) {
+                    area.origin_x = left;
+                    area.width = right - left;
+                    break;
+                }
+                top = floats.next_clear_after(y) - origin_y;
+            }
         }
         line.push(PlacedWord {
             word,
@@ -227,9 +253,9 @@ pub fn layout_lines(
         x += space + word_width;
     }
     if !line.is_empty() {
-        let height = finish_line(&line, content.align, &area, lines.height, font, &mut lines);
-        lines.height += height;
+        top += finish_line(&line, content.align, &area, top, font, &mut lines);
     }
+    lines.height = top;
     lines
 }
 

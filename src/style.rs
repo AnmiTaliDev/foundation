@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::css::{self, Color, Combinator, Rule, Selector, Specificity, Stylesheet, Value};
 use crate::dom::{ElementData, Node, NodeType};
+use crate::float::Side;
 
 pub const USER_AGENT_STYLESHEET: &str =
     "head, style, script, title, meta, link, base { display: none; } \
@@ -25,6 +26,14 @@ pub enum Display {
     Block,
     Inline,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Clear {
+    None,
+    Left,
+    Right,
+    Both,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -395,6 +404,35 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "center" => TextAlign::Center,
             Some(Value::Keyword(keyword)) if keyword == "right" => TextAlign::Right,
             _ => TextAlign::Left,
+        }
+    }
+
+    pub fn float(&self) -> Option<Side> {
+        match self.value("float") {
+            Some(Value::Keyword(keyword)) if keyword == "left" => Some(Side::Left),
+            Some(Value::Keyword(keyword)) if keyword == "right" => Some(Side::Right),
+            _ => None,
+        }
+    }
+
+    pub fn clear(&self) -> Clear {
+        match self.value("clear") {
+            Some(Value::Keyword(keyword)) if keyword == "left" => Clear::Left,
+            Some(Value::Keyword(keyword)) if keyword == "right" => Clear::Right,
+            Some(Value::Keyword(keyword)) if keyword == "both" => Clear::Both,
+            _ => Clear::None,
+        }
+    }
+
+    pub fn establishes_block_context(&self) -> bool {
+        if self.float().is_some() {
+            return true;
+        }
+        match self.value("overflow") {
+            Some(Value::Keyword(keyword)) => {
+                keyword == "hidden" || keyword == "auto" || keyword == "scroll"
+            }
+            _ => false,
         }
     }
 

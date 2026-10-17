@@ -7,9 +7,10 @@ use fontdue::Font;
 
 use crate::css::Color;
 use crate::dom::ElementData;
+use crate::float::{FloatContext, Side};
 use crate::inline::{self, Fragment, ImageFragment, ImageRun, InlineContent, InlineItem, Run};
 use crate::picture::Picture;
-use crate::style::{Content, Display, StyledNode, TextAlign};
+use crate::style::{Clear, Content, Display, StyledNode, TextAlign};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -50,6 +51,7 @@ pub struct LayoutBox<'a> {
     pub children: Vec<LayoutBox<'a>>,
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
+    forced_width: Option<f32>,
 }
 
 impl Rect {
@@ -86,7 +88,13 @@ pub fn layout_tree<'a>(
     let mut layout_root = build_block_box(root, images);
     let mut viewport = Dimensions::default();
     viewport.content.width = viewport_width;
-    layout_root.layout(&viewport, font, images);
+    let mut floats = FloatContext::default();
+    layout_root.layout(&viewport, font, images, &mut floats);
+    let bottom = floats.max_bottom();
+    let content_bottom = layout_root.dimensions.content.y + layout_root.dimensions.content.height;
+    if bottom > content_bottom {
+        layout_root.dimensions.content.height += bottom - content_bottom;
+    }
     layout_root
 }
 
@@ -98,6 +106,7 @@ impl<'a> LayoutBox<'a> {
             children,
             fragments: Vec::new(),
             images: Vec::new(),
+            forced_width: None,
         }
     }
 }
@@ -119,9 +128,15 @@ fn collect_child<'a>(
     children: &mut Vec<LayoutBox<'a>>,
     items: &mut Vec<InlineItem<'a>>,
 ) {
-    match node.display() {
+    let display = node.display();
+    let floated = node.float().is_some();
+    match display {
         Display::None => {}
         Display::Block => {
+            flush_items(node.text_align(), children, items);
+            children.push(build_block_box(node, images));
+        }
+        Display::Inline if floated => {
             flush_items(node.text_align(), children, items);
             children.push(build_block_box(node, images));
         }
@@ -243,6 +258,15 @@ fn block_replaced(style: &StyledNode, images: &ImageMap, container: f32) -> Opti
     })
 }
 
+fn horizontal_extras(style: &StyledNode, base: f32) -> f32 {
+    style.px("margin-left", base)
+        + style.px("margin-right", base)
+        + style.px("border-left-width", base)
+        + style.px("border-right-width", base)
+        + style.px("padding-left", base)
+        + style.px("padding-right", base)
+}
+
 fn combine_margins(a: f32, b: f32) -> f32 {
     if a >= 0.0 && b >= 0.0 {
         a.max(b)
@@ -290,14 +314,30 @@ fn resolve_horizontal(
 }
 
 impl<'a> LayoutBox<'a> {
-    fn layout(&mut self, containing: &Dimensions, font: &Font, images: &ImageMap) {
+    fn layout(
+        &mut self,
+        containing: &Dimensions,
+        font: &Font,
+        images: &ImageMap,
+        floats: &mut FloatContext,
+    ) {
         match &self.kind {
             BoxKind::Block(style) => {
                 let style = *style;
                 let replaced = block_replaced(style, images, containing.content.width);
                 self.calculate_width(style, containing, replaced.as_ref());
                 self.calculate_position(style, containing);
-                self.layout_children(font, images);
+                if style.establishes_block_context() {
+                    let mut own = FloatContext::default();
+                    self.layout_children(font, images, &mut own);
+                    let content_bottom = self.dimensions.content.y + self.dimensions.content.height;
+                    let float_bottom = own.max_bottom();
+                    if float_bottom > content_bottom {
+                        self.dimensions.content.height += float_bottom - content_bottom;
+                    }
+                } else {
+                    self.layout_children(font, images, floats);
+                }
                 self.collapse_bottom_margin(style);
                 self.calculate_height(style, replaced.as_ref());
                 if let Some(replaced) = replaced {
@@ -309,7 +349,7 @@ impl<'a> LayoutBox<'a> {
                 area.x = containing.content.x;
                 area.y = containing.content.y + containing.content.height;
                 area.width = containing.content.width;
-                let lines = inline::layout_lines(content, area.width, area.x, area.y, font);
+                let lines = inline::layout_lines(content, area.width, area.x, area.y, font, floats);
                 area.height = lines.height;
                 self.fragments = lines.fragments;
                 self.images = lines.images;
@@ -322,11 +362,14 @@ impl<'a> LayoutBox<'a> {
             return 0.0;
         };
         let own = style.px("margin-top", base);
-        if style.px("border-top-width", base) != 0.0 || style.px("padding-top", base) != 0.0 {
+        if style.establishes_block_context()
+            || style.px("border-top-width", base) != 0.0
+            || style.px("padding-top", base) != 0.0
+        {
             return own;
         }
         match self.children.first() {
-            Some(first) if matches!(first.kind, BoxKind::Block(_)) => {
+            Some(first) if first.is_in_flow_block() => {
                 combine_margins(own, first.collapsed_top_margin(base))
             }
             _ => own,
@@ -340,6 +383,10 @@ impl<'a> LayoutBox<'a> {
         replaced: Option<&Replaced>,
     ) {
         let container = containing.content.width;
+        if let Some(forced) = self.forced_width {
+            self.calculate_forced_width(style, container, forced);
+            return;
+        }
         let width = match replaced {
             Some(replaced) => Some(replaced.width),
             None => style.length_or_auto("width", None, Some(container)),
@@ -398,15 +445,146 @@ impl<'a> LayoutBox<'a> {
             + d.padding.top;
     }
 
-    fn layout_children(&mut self, font: &Font, images: &ImageMap) {
+    fn is_in_flow_block(&self) -> bool {
+        match &self.kind {
+            BoxKind::Block(style) => style.float().is_none(),
+            BoxKind::Anonymous(_) => false,
+        }
+    }
+
+    fn calculate_forced_width(&mut self, style: &StyledNode, container: f32, width: f32) {
+        let d = &mut self.dimensions;
+        d.content.width = width;
+        d.padding.left = style.px("padding-left", container);
+        d.padding.right = style.px("padding-right", container);
+        d.border.left = style.px("border-left-width", container);
+        d.border.right = style.px("border-right-width", container);
+        d.margin.left = style.px("margin-left", container);
+        d.margin.right = style.px("margin-right", container);
+    }
+
+    fn preferred_width(&self, font: &Font, images: &ImageMap, base: f32) -> f32 {
+        match &self.kind {
+            BoxKind::Anonymous(content) => inline::max_content_width(content, font),
+            BoxKind::Block(style) => {
+                if let Some(replaced) = block_replaced(style, images, base) {
+                    return replaced.width;
+                }
+                if let Some(width) = style.length_or_auto("width", None, Some(base)) {
+                    return width;
+                }
+                let mut widest: f32 = 0.0;
+                for child in &self.children {
+                    let extras = match &child.kind {
+                        BoxKind::Block(child_style) => horizontal_extras(child_style, base),
+                        BoxKind::Anonymous(_) => 0.0,
+                    };
+                    widest = widest.max(child.preferred_width(font, images, base) + extras);
+                }
+                widest
+            }
+        }
+    }
+
+    fn translate(&mut self, dx: f32, dy: f32) {
+        self.dimensions.content.x += dx;
+        self.dimensions.content.y += dy;
+        for fragment in &mut self.fragments {
+            fragment.x += dx;
+            fragment.baseline += dy;
+            if let Some((_, rect)) = &mut fragment.background {
+                rect.x += dx;
+                rect.y += dy;
+            }
+        }
+        for image in &mut self.images {
+            image.rect.x += dx;
+            image.rect.y += dy;
+        }
+        for child in &mut self.children {
+            child.translate(dx, dy);
+        }
+    }
+
+    fn layout_float(
+        &mut self,
+        side: Side,
+        parent: &Dimensions,
+        font: &Font,
+        images: &ImageMap,
+        floats: &mut FloatContext,
+    ) {
+        let BoxKind::Block(style) = &self.kind else {
+            return;
+        };
+        let style = *style;
+        let container = parent.content.width;
+        let replaced = block_replaced(style, images, container);
+        let extras = horizontal_extras(style, container);
+        let specified = match &replaced {
+            Some(replaced) => Some(replaced.width),
+            None => style.length_or_auto("width", None, Some(container)),
+        };
+        let mut width = match specified {
+            Some(width) => width,
+            None => self
+                .preferred_width(font, images, container)
+                .min((container - extras).max(0.0)),
+        };
+        if let Some(max) = style.length_or_auto("max-width", None, Some(container)) {
+            width = width.min(max);
+        }
+        if let Some(min) = style.length_or_auto("min-width", None, Some(container)) {
+            width = width.max(min);
+        }
+        self.forced_width = Some(width);
+
+        let mut origin = Dimensions::default();
+        origin.content.width = container;
+        self.layout(&origin, font, images, &mut FloatContext::default());
+
+        let margin_box = self.dimensions.margin_box();
+        let flow_y = parent.content.y + parent.content.height;
+        let min_y = flow_y
+            .max(floats.clearance(style.clear()))
+            .max(floats.top_limit());
+        let (x, y) = floats.place(
+            side,
+            margin_box.width,
+            margin_box.height,
+            min_y,
+            parent.content.x,
+            parent.content.x + container,
+        );
+        self.translate(x - margin_box.x, y - margin_box.y);
+        floats.add(
+            side,
+            Rect {
+                x,
+                y,
+                width: margin_box.width,
+                height: margin_box.height,
+            },
+        );
+    }
+
+    fn layout_children(&mut self, font: &Font, images: &ImageMap, floats: &mut FloatContext) {
         let base = self.dimensions.content.width;
         let top_open = self.dimensions.border.top == 0.0 && self.dimensions.padding.top == 0.0;
         let mut previous_bottom: Option<f32> = None;
 
         for (index, child) in self.children.iter_mut().enumerate() {
+            if let BoxKind::Block(style) = &child.kind {
+                if let Some(side) = style.float() {
+                    child.layout_float(side, &self.dimensions, font, images, floats);
+                    continue;
+                }
+            }
+
             let is_block = matches!(child.kind, BoxKind::Block(_));
             let mut overlap = 0.0;
-            if is_block {
+            let mut shift = 0.0;
+            if let BoxKind::Block(style) = &child.kind {
                 let top = child.collapsed_top_margin(base);
                 if index == 0 {
                     if top_open {
@@ -415,12 +593,22 @@ impl<'a> LayoutBox<'a> {
                 } else if let Some(bottom) = previous_bottom {
                     overlap = bottom + top - combine_margins(bottom, top);
                 }
+                let clear = style.clear();
+                if clear != Clear::None {
+                    let border_top =
+                        self.dimensions.content.y + self.dimensions.content.height - overlap + top;
+                    let clear_y = floats.clearance(clear);
+                    if clear_y > border_top {
+                        shift = clear_y - border_top;
+                    }
+                }
             }
 
             let mut containing = self.dimensions;
-            containing.content.height -= overlap;
-            child.layout(&containing, font, images);
-            self.dimensions.content.height += child.dimensions.margin_box().height - overlap;
+            containing.content.height += shift - overlap;
+            child.layout(&containing, font, images, floats);
+            self.dimensions.content.height +=
+                child.dimensions.margin_box().height - overlap + shift;
 
             previous_bottom = if is_block {
                 Some(child.dimensions.margin.bottom)
@@ -432,7 +620,8 @@ impl<'a> LayoutBox<'a> {
 
     fn collapse_bottom_margin(&mut self, style: &StyledNode) {
         let base = self.dimensions.content.width;
-        let closed = style.length_or_auto("height", None, None).is_some()
+        let closed = style.establishes_block_context()
+            || style.length_or_auto("height", None, None).is_some()
             || self.dimensions.border.bottom != 0.0
             || self.dimensions.padding.bottom != 0.0
             || style.px("border-bottom-width", base) != 0.0;
@@ -440,7 +629,7 @@ impl<'a> LayoutBox<'a> {
             return;
         }
         if let Some(last) = self.children.last() {
-            if matches!(last.kind, BoxKind::Block(_)) {
+            if last.is_in_flow_block() {
                 let bottom = last.dimensions.margin.bottom;
                 self.dimensions.content.height -= bottom;
                 self.dimensions.margin.bottom =
