@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::style::{Display, StyledNode};
+use fontdue::Font;
+
+use crate::inline::{self, Fragment, Run};
+use crate::style::{Content, Display, StyledNode};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -27,10 +30,17 @@ pub struct Dimensions {
 }
 
 #[derive(Debug)]
+pub enum BoxKind<'a> {
+    Block(&'a StyledNode<'a>),
+    Anonymous(Vec<Run<'a>>),
+}
+
+#[derive(Debug)]
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
-    pub style: &'a StyledNode<'a>,
+    pub kind: BoxKind<'a>,
     pub children: Vec<LayoutBox<'a>>,
+    pub fragments: Vec<Fragment>,
 }
 
 impl Rect {
@@ -58,38 +68,102 @@ impl Dimensions {
     }
 }
 
-pub fn layout_tree<'a>(root: &'a StyledNode<'a>, viewport_width: f32) -> LayoutBox<'a> {
-    let mut layout_root = build_layout_tree(root);
+pub fn layout_tree<'a>(
+    root: &'a StyledNode<'a>,
+    viewport_width: f32,
+    font: &Font,
+) -> LayoutBox<'a> {
+    let mut layout_root = build_block_box(root);
     let mut viewport = Dimensions::default();
     viewport.content.width = viewport_width;
-    layout_root.layout(&viewport);
+    layout_root.layout(&viewport, font);
     layout_root
 }
 
-fn build_layout_tree<'a>(style: &'a StyledNode<'a>) -> LayoutBox<'a> {
+fn build_block_box<'a>(style: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut children = Vec::new();
+    let mut runs = Vec::new();
     for child in &style.children {
-        if child.display() != Display::None {
-            children.push(build_layout_tree(child));
-        }
+        collect_child(child, &mut children, &mut runs);
     }
+    flush_runs(&mut children, &mut runs);
     LayoutBox {
         dimensions: Dimensions::default(),
-        style,
+        kind: BoxKind::Block(style),
         children,
+        fragments: Vec::new(),
+    }
+}
+
+fn collect_child<'a>(
+    node: &'a StyledNode<'a>,
+    children: &mut Vec<LayoutBox<'a>>,
+    runs: &mut Vec<Run<'a>>,
+) {
+    match node.display() {
+        Display::None => {}
+        Display::Block => {
+            flush_runs(children, runs);
+            children.push(build_block_box(node));
+        }
+        Display::Inline => match node.content {
+            Content::Text(text) => runs.push(Run {
+                text,
+                color: node.text_color(),
+                font_size: node.font_size(),
+            }),
+            Content::Element(_) => {
+                for child in &node.children {
+                    collect_child(child, children, runs);
+                }
+            }
+        },
+    }
+}
+
+fn flush_runs<'a>(children: &mut Vec<LayoutBox<'a>>, runs: &mut Vec<Run<'a>>) {
+    let mut has_text = false;
+    for run in runs.iter() {
+        if !run.text.trim().is_empty() {
+            has_text = true;
+        }
+    }
+    if has_text {
+        children.push(LayoutBox {
+            dimensions: Dimensions::default(),
+            kind: BoxKind::Anonymous(std::mem::take(runs)),
+            children: Vec::new(),
+            fragments: Vec::new(),
+        });
+    } else {
+        runs.clear();
     }
 }
 
 impl<'a> LayoutBox<'a> {
-    fn layout(&mut self, containing: &Dimensions) {
-        self.calculate_width(containing);
-        self.calculate_position(containing);
-        self.layout_children();
-        self.calculate_height();
+    fn layout(&mut self, containing: &Dimensions, font: &Font) {
+        match &self.kind {
+            BoxKind::Block(style) => {
+                let style = *style;
+                self.calculate_width(style, containing);
+                self.calculate_position(style, containing);
+                self.layout_children(font);
+                self.calculate_height(style);
+            }
+            BoxKind::Anonymous(runs) => {
+                let content = &mut self.dimensions.content;
+                content.x = containing.content.x;
+                content.y = containing.content.y + containing.content.height;
+                content.width = containing.content.width;
+                let (fragments, height) =
+                    inline::layout_lines(runs, content.width, content.x, content.y, font);
+                content.height = height;
+                self.fragments = fragments;
+            }
+        }
     }
 
-    fn calculate_width(&mut self, containing: &Dimensions) {
-        let style = self.style;
+    fn calculate_width(&mut self, style: &StyledNode, containing: &Dimensions) {
         let width = style.length_or_auto("width", None);
         let mut margin_left = style.length_or_auto("margin-left", Some(0.0));
         let mut margin_right = style.length_or_auto("margin-right", Some(0.0));
@@ -140,8 +214,7 @@ impl<'a> LayoutBox<'a> {
         d.margin.right = margin_right;
     }
 
-    fn calculate_position(&mut self, containing: &Dimensions) {
-        let style = self.style;
+    fn calculate_position(&mut self, style: &StyledNode, containing: &Dimensions) {
         let d = &mut self.dimensions;
 
         d.margin.top = style.px("margin-top");
@@ -159,15 +232,15 @@ impl<'a> LayoutBox<'a> {
             + d.padding.top;
     }
 
-    fn layout_children(&mut self) {
+    fn layout_children(&mut self, font: &Font) {
         for child in &mut self.children {
-            child.layout(&self.dimensions);
+            child.layout(&self.dimensions, font);
             self.dimensions.content.height += child.dimensions.margin_box().height;
         }
     }
 
-    fn calculate_height(&mut self) {
-        if let Some(height) = self.style.length_or_auto("height", None) {
+    fn calculate_height(&mut self, style: &StyledNode) {
+        if let Some(height) = style.length_or_auto("height", None) {
             self.dimensions.content.height = height;
         }
     }

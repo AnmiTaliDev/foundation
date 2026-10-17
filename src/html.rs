@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
         self.consume_char();
         self.consume_while(is_not_tag_start);
         let text = &self.input[start..self.pos];
-        if !text.trim().is_empty() {
+        if self.stack.len() > 1 || !text.trim().is_empty() {
             self.append(Node::text(text.to_string()));
         }
     }

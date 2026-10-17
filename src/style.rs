@@ -6,19 +6,36 @@ use crate::css::{self, Color, Rule, Selector, Specificity, Stylesheet, Value};
 use crate::dom::{ElementData, Node, NodeType};
 
 pub const USER_AGENT_STYLESHEET: &str =
-    "head, style, script, title, meta, link, base { display: none; } body { margin: 8px; }";
+    "head, style, script, title, meta, link, base { display: none; } \
+    span, a, b, i, em, strong, code, small, u, label { display: inline; } \
+    body { margin: 8px; } \
+    h1 { font-size: 32px; } h2 { font-size: 24px; } h3 { font-size: 19px; } \
+    p, h1, h2, h3 { margin-bottom: 12px; }";
+
+pub const DEFAULT_FONT_SIZE: f32 = 16.0;
+
+pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
+
+const INHERITED_PROPERTIES: [&str; 2] = ["color", "font-size"];
 
 pub type PropertyMap = HashMap<String, Value>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Display {
     Block,
+    Inline,
     None,
 }
 
 #[derive(Debug)]
+pub enum Content<'a> {
+    Element(&'a ElementData),
+    Text(&'a str),
+}
+
+#[derive(Debug)]
 pub struct StyledNode<'a> {
-    pub element: &'a ElementData,
+    pub content: Content<'a>,
     pub specified_values: PropertyMap,
     pub children: Vec<StyledNode<'a>>,
 }
@@ -49,23 +66,45 @@ fn collect_style_text(node: &Node, out: &mut String) {
 }
 
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &Stylesheet) -> Option<StyledNode<'a>> {
-    let NodeType::Element(element) = &root.node_type else {
-        return None;
-    };
-    let mut children = Vec::new();
-    for child in &root.children {
-        if let Some(styled) = style_tree(child, stylesheet) {
-            children.push(styled);
-        }
+    match &root.node_type {
+        NodeType::Element(_) => Some(style_node(root, stylesheet, &PropertyMap::new())),
+        NodeType::Text(_) => None,
     }
-    Some(StyledNode {
-        element,
-        specified_values: specified_values(element, stylesheet),
-        children,
-    })
 }
 
-fn specified_values(element: &ElementData, stylesheet: &Stylesheet) -> PropertyMap {
+fn style_node<'a>(node: &'a Node, stylesheet: &Stylesheet, parent: &PropertyMap) -> StyledNode<'a> {
+    let mut inherited = PropertyMap::new();
+    for name in INHERITED_PROPERTIES {
+        if let Some(value) = parent.get(name) {
+            inherited.insert(name.to_string(), value.clone());
+        }
+    }
+    match &node.node_type {
+        NodeType::Text(text) => StyledNode {
+            content: Content::Text(text),
+            specified_values: inherited,
+            children: Vec::new(),
+        },
+        NodeType::Element(element) => {
+            let values = specified_values(element, stylesheet, inherited);
+            let mut children = Vec::new();
+            for child in &node.children {
+                children.push(style_node(child, stylesheet, &values));
+            }
+            StyledNode {
+                content: Content::Element(element),
+                specified_values: values,
+                children,
+            }
+        }
+    }
+}
+
+fn specified_values(
+    element: &ElementData,
+    stylesheet: &Stylesheet,
+    inherited: PropertyMap,
+) -> PropertyMap {
     let mut matched: Vec<(Specificity, &Rule)> = Vec::new();
     for rule in &stylesheet.rules {
         if let Some(specificity) = match_rule(element, rule) {
@@ -74,7 +113,7 @@ fn specified_values(element: &ElementData, stylesheet: &Stylesheet) -> PropertyM
     }
     matched.sort_by_key(|entry| entry.0);
 
-    let mut values = PropertyMap::new();
+    let mut values = inherited;
     for (_, rule) in matched {
         for declaration in &rule.declarations {
             values.insert(declaration.name.clone(), declaration.value.clone());
@@ -122,10 +161,23 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn display(&self) -> Display {
+        if let Content::Text(_) = self.content {
+            return Display::Inline;
+        }
         match self.value("display") {
             Some(Value::Keyword(keyword)) if keyword == "none" => Display::None,
+            Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
             _ => Display::Block,
         }
+    }
+
+    pub fn font_size(&self) -> f32 {
+        self.length_or_auto("font-size", Some(DEFAULT_FONT_SIZE))
+            .unwrap_or(DEFAULT_FONT_SIZE)
+    }
+
+    pub fn text_color(&self) -> Color {
+        self.color("color").unwrap_or(BLACK)
     }
 
     pub fn length_or_auto(&self, name: &str, default: Option<f32>) -> Option<f32> {

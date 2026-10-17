@@ -2,7 +2,7 @@
 
 use foundation::css::{self, Color, Value};
 use foundation::dom::NodeType;
-use foundation::{html, layout, render, style};
+use foundation::{html, layout, render, style, text};
 
 const RED: Color = Color { r: 255, g: 0, b: 0 };
 const GREEN: Color = Color { r: 0, g: 255, b: 0 };
@@ -106,7 +106,7 @@ fn layout_fills_container_width_with_auto() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0);
+    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.x, 10.0);
     assert_eq!(div.dimensions.content.y, 10.0);
@@ -121,7 +121,7 @@ fn layout_centers_with_auto_margins() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0);
+    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.x, 25.0);
     assert_eq!(div.dimensions.content.width, 50.0);
@@ -134,7 +134,7 @@ fn layout_skips_display_none() {
     );
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet).unwrap();
-    let layout_root = layout::layout_tree(&styled, 100.0);
+    let layout_root = layout::layout_tree(&styled, 100.0, &text::default_font());
     let body = &layout_root.children[0];
     assert_eq!(body.children.len(), 1);
     assert_eq!(body.dimensions.content.height, 7.0);
@@ -179,4 +179,95 @@ fn render_clips_content_outside_canvas() {
     );
     assert_eq!(canvas.pixel(9, 9), RED);
     assert_eq!(canvas.to_ppm().len(), "P6\n10 10\n255\n".len() + 300);
+}
+
+fn first_anonymous<'a, 'b>(
+    layout_box: &'b layout::LayoutBox<'a>,
+) -> Option<&'b layout::LayoutBox<'a>> {
+    if let layout::BoxKind::Anonymous(_) = layout_box.kind {
+        return Some(layout_box);
+    }
+    for child in &layout_box.children {
+        if let Some(found) = first_anonymous(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[test]
+fn inline_runs_share_a_line_and_respect_spaces() {
+    let root = html::parse(
+        "<html><style>body { margin: 0 }</style><body><p>a<b>b</b> c</p></body></html>",
+    );
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let font = text::default_font();
+    let layout_root = layout::layout_tree(&styled, 500.0, &font);
+    let anonymous = first_anonymous(&layout_root).unwrap();
+    let fragments = &anonymous.fragments;
+    assert_eq!(fragments.len(), 3);
+    assert_eq!(fragments[0].baseline, fragments[2].baseline);
+    let a_end = fragments[0].x + text::text_width(&font, "a", 16.0);
+    assert!((fragments[1].x - a_end).abs() < 0.001);
+    let b_end = fragments[1].x + text::text_width(&font, "b", 16.0);
+    assert!(fragments[2].x > b_end);
+}
+
+#[test]
+fn text_wraps_at_container_width() {
+    let root = html::parse(
+        "<html><style>body { margin: 0 }</style><body><p>one two three four five six</p></body></html>",
+    );
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let font = text::default_font();
+    let wide = layout::layout_tree(&styled, 1000.0, &font);
+    let narrow = layout::layout_tree(&styled, 60.0, &font);
+    let wide_text = first_anonymous(&wide).unwrap();
+    let narrow_text = first_anonymous(&narrow).unwrap();
+    assert_eq!(
+        wide_text.dimensions.content.height,
+        text::line_height(&font, 16.0)
+    );
+    assert!(narrow_text.dimensions.content.height > wide_text.dimensions.content.height * 2.0);
+    for fragment in &narrow_text.fragments {
+        assert!(fragment.x + text::text_width(&font, &fragment.text, 16.0) <= 60.0 + 0.001);
+    }
+}
+
+#[test]
+fn text_inherits_color_and_size() {
+    let root = html::parse(
+        "<html><style>body { margin: 0; color: red; font-size: 40px }</style><body><span>I</span></body></html>",
+    );
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet).unwrap();
+    let layout_root = layout::layout_tree(&styled, 200.0, &text::default_font());
+    let fragment = &first_anonymous(&layout_root).unwrap().fragments[0];
+    assert_eq!(fragment.color, RED);
+    assert_eq!(fragment.font_size, 40.0);
+}
+
+#[test]
+fn render_draws_text_pixels() {
+    let canvas = render(
+        "<html><style>body { margin: 0; font-size: 40px }</style><body>I</body></html>",
+        60,
+        60,
+    );
+    let mut dark = 0;
+    let mut outside = 0;
+    for y in 0..60 {
+        for x in 0..60 {
+            if canvas.pixel(x, y) != WHITE {
+                dark += 1;
+                if x >= 30 {
+                    outside += 1;
+                }
+            }
+        }
+    }
+    assert!(dark > 20);
+    assert_eq!(outside, 0);
 }
