@@ -24,8 +24,50 @@ pub type PropertyMap = HashMap<String, Value>;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Display {
     Block,
+    Flex,
     Inline,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlexDirection {
+    Row,
+    RowReverse,
+    Column,
+    ColumnReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlexWrap {
+    NoWrap,
+    Wrap,
+    WrapReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Align {
+    Stretch,
+    Start,
+    End,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Justify {
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+    Stretch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlexBasis {
+    Auto,
+    Content,
+    Size(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -388,6 +430,9 @@ impl<'a> StyledNode<'a> {
         match self.value("display") {
             Some(Value::Keyword(keyword)) if keyword == "none" => Display::None,
             Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
+            Some(Value::Keyword(keyword)) if keyword == "flex" || keyword == "inline-flex" => {
+                Display::Flex
+            }
             _ => Display::Block,
         }
     }
@@ -457,8 +502,108 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    fn keyword(&self, name: &str) -> Option<&str> {
+        match self.value(name) {
+            Some(Value::Keyword(keyword)) => Some(keyword.as_str()),
+            _ => None,
+        }
+    }
+
+    fn number(&self, name: &str, default: f32) -> f32 {
+        match self.value(name) {
+            Some(Value::Number(number)) => *number,
+            Some(Value::Length(px)) if *px == 0.0 => 0.0,
+            _ => default,
+        }
+    }
+
+    pub fn flex_direction(&self) -> FlexDirection {
+        match self.keyword("flex-direction") {
+            Some("row-reverse") => FlexDirection::RowReverse,
+            Some("column") => FlexDirection::Column,
+            Some("column-reverse") => FlexDirection::ColumnReverse,
+            _ => FlexDirection::Row,
+        }
+    }
+
+    pub fn flex_wrap(&self) -> FlexWrap {
+        match self.keyword("flex-wrap") {
+            Some("wrap") => FlexWrap::Wrap,
+            Some("wrap-reverse") => FlexWrap::WrapReverse,
+            _ => FlexWrap::NoWrap,
+        }
+    }
+
+    fn align_keyword(keyword: &str) -> Option<Align> {
+        match keyword {
+            "stretch" | "normal" => Some(Align::Stretch),
+            "flex-start" | "start" | "self-start" | "baseline" | "first baseline" => {
+                Some(Align::Start)
+            }
+            "flex-end" | "end" | "self-end" | "last baseline" => Some(Align::End),
+            "center" => Some(Align::Center),
+            _ => None,
+        }
+    }
+
+    pub fn align_items(&self) -> Align {
+        match self.keyword("align-items") {
+            Some(keyword) => StyledNode::align_keyword(keyword).unwrap_or(Align::Stretch),
+            None => Align::Stretch,
+        }
+    }
+
+    pub fn align_self(&self) -> Option<Align> {
+        StyledNode::align_keyword(self.keyword("align-self")?)
+    }
+
+    pub fn justify_content(&self) -> Justify {
+        match self.keyword("justify-content") {
+            Some("flex-end") | Some("end") | Some("right") => Justify::End,
+            Some("center") => Justify::Center,
+            Some("space-between") => Justify::SpaceBetween,
+            Some("space-around") => Justify::SpaceAround,
+            Some("space-evenly") => Justify::SpaceEvenly,
+            _ => Justify::Start,
+        }
+    }
+
+    pub fn align_content(&self) -> Justify {
+        match self.keyword("align-content") {
+            Some("flex-start") | Some("start") => Justify::Start,
+            Some("flex-end") | Some("end") => Justify::End,
+            Some("center") => Justify::Center,
+            Some("space-between") => Justify::SpaceBetween,
+            Some("space-around") => Justify::SpaceAround,
+            Some("space-evenly") => Justify::SpaceEvenly,
+            _ => Justify::Stretch,
+        }
+    }
+
+    pub fn flex_grow(&self) -> f32 {
+        self.number("flex-grow", 0.0).max(0.0)
+    }
+
+    pub fn flex_shrink(&self) -> f32 {
+        self.number("flex-shrink", 1.0).max(0.0)
+    }
+
+    pub fn flex_basis(&self, percent_base: Option<f32>) -> FlexBasis {
+        if self.keyword("flex-basis") == Some("content") {
+            return FlexBasis::Content;
+        }
+        match self.length_or_auto("flex-basis", None, percent_base) {
+            Some(size) => FlexBasis::Size(size),
+            None => FlexBasis::Auto,
+        }
+    }
+
+    pub fn order(&self) -> i32 {
+        self.number("order", 0.0) as i32
+    }
+
     pub fn establishes_block_context(&self) -> bool {
-        if self.float().is_some() || self.is_out_of_flow() {
+        if self.float().is_some() || self.is_out_of_flow() || self.display() == Display::Flex {
             return true;
         }
         match self.value("overflow") {

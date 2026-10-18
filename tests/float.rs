@@ -267,3 +267,20 @@ fn render_draws_floats_on_both_sides() {
     assert_eq!(canvas.pixel(19, 4), RED);
     assert_eq!(canvas.pixel(0, 5), WHITE);
 }
+
+#[test]
+fn context_roots_keep_the_top_margin_of_their_first_child() {
+    with_layout(
+        "<html><style>body { margin: 0 } .f { float: left; width: 20px } .o { overflow: hidden } .m { margin-top: 10px; height: 5px }</style><body><div class=\"f\"><div class=\"m\"></div></div><div class=\"o\"><div class=\"m\"></div></div></body></html>",
+        100.0,
+        |root| {
+            let floated = &body(root).children[0];
+            assert_eq!(floated.dimensions.margin.top, 0.0);
+            assert_eq!(floated.children[0].dimensions.content.y, 10.0);
+            let hidden = &body(root).children[1];
+            assert_eq!(hidden.dimensions.margin.top, 0.0);
+            assert_eq!(hidden.children[0].dimensions.content.y, 10.0);
+            assert_eq!(hidden.dimensions.content.height, 15.0);
+        },
+    );
+}

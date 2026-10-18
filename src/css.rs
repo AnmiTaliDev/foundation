@@ -330,6 +330,15 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "font" {
         return expand_font(value);
     }
+    if name == "flex" {
+        return expand_flex(value);
+    }
+    if name == "flex-flow" {
+        return expand_flex_flow(value);
+    }
+    if name == "gap" {
+        return expand_gap(value);
+    }
     if name == "background" {
         return expand_background(value);
     }
@@ -443,6 +452,128 @@ fn expand_font(text: &str) -> Vec<Declaration> {
         ];
     }
     Vec::new()
+}
+
+fn plain_number(token: &str) -> Option<f32> {
+    let first = token.chars().next()?;
+    if !(first.is_ascii_digit() || first == '.') {
+        return None;
+    }
+    parse_number(token)
+}
+
+fn declaration(name: &str, value: Value) -> Declaration {
+    Declaration {
+        name: name.to_string(),
+        value,
+    }
+}
+
+fn expand_flex(text: &str) -> Vec<Declaration> {
+    let tokens = split_values(text);
+    let keyword = |grow: f32, shrink: f32, basis: &str| {
+        vec![
+            declaration("flex-grow", Value::Number(grow)),
+            declaration("flex-shrink", Value::Number(shrink)),
+            declaration("flex-basis", Value::Keyword(basis.to_string())),
+        ]
+    };
+    if tokens.len() == 1 {
+        match tokens[0].to_ascii_lowercase().as_str() {
+            "none" => return keyword(0.0, 0.0, "auto"),
+            "auto" => return keyword(1.0, 1.0, "auto"),
+            "initial" => return keyword(0.0, 1.0, "auto"),
+            _ => {}
+        }
+    }
+    let mut grow = 1.0;
+    let mut shrink = 1.0;
+    let mut basis = Value::Percent(0.0);
+    let mut index = 0;
+    if let Some(number) = tokens.first().and_then(|token| plain_number(token)) {
+        grow = number;
+        index = 1;
+        if let Some(number) = tokens.get(1).and_then(|token| plain_number(token)) {
+            shrink = number;
+            index = 2;
+        }
+    }
+    if index < tokens.len() {
+        match parse_value(tokens[index]) {
+            Some(
+                value @ (Value::Length(_)
+                | Value::Em(_)
+                | Value::Percent(_)
+                | Value::Rem(_)
+                | Value::Vw(_)
+                | Value::Vh(_)
+                | Value::Vmin(_)
+                | Value::Vmax(_)
+                | Value::Calc(_)),
+            ) => basis = value,
+            Some(Value::Keyword(keyword)) if keyword == "auto" || keyword == "content" => {
+                basis = Value::Keyword(keyword)
+            }
+            _ => return Vec::new(),
+        }
+        index += 1;
+    }
+    if tokens.is_empty() || index != tokens.len() || grow < 0.0 || shrink < 0.0 {
+        return Vec::new();
+    }
+    vec![
+        declaration("flex-grow", Value::Number(grow)),
+        declaration("flex-shrink", Value::Number(shrink)),
+        declaration("flex-basis", basis),
+    ]
+}
+
+fn expand_flex_flow(text: &str) -> Vec<Declaration> {
+    let mut declarations = Vec::new();
+    for token in split_values(text) {
+        let keyword = token.to_ascii_lowercase();
+        match keyword.as_str() {
+            "row" | "row-reverse" | "column" | "column-reverse" => {
+                declarations.push(declaration("flex-direction", Value::Keyword(keyword)));
+            }
+            "nowrap" | "wrap" | "wrap-reverse" => {
+                declarations.push(declaration("flex-wrap", Value::Keyword(keyword)));
+            }
+            _ => return Vec::new(),
+        }
+    }
+    declarations
+}
+
+fn expand_gap(text: &str) -> Vec<Declaration> {
+    let mut values = Vec::new();
+    for token in split_values(text) {
+        match parse_value(token) {
+            Some(
+                value @ (Value::Length(_)
+                | Value::Em(_)
+                | Value::Percent(_)
+                | Value::Rem(_)
+                | Value::Vw(_)
+                | Value::Vh(_)
+                | Value::Vmin(_)
+                | Value::Vmax(_)
+                | Value::Calc(_)),
+            ) => values.push(value),
+            _ => return Vec::new(),
+        }
+    }
+    match values.len() {
+        1 => vec![
+            declaration("row-gap", values[0].clone()),
+            declaration("column-gap", values[0].clone()),
+        ],
+        2 => vec![
+            declaration("row-gap", values[0].clone()),
+            declaration("column-gap", values[1].clone()),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 fn parse_light_dark(text: &str) -> Option<Value> {
