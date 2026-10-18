@@ -42,7 +42,12 @@ impl Location {
                 if path.starts_with('/') {
                     Ok(Location::File(PathBuf::from(path)))
                 } else {
-                    let directory = base.parent().unwrap_or(Path::new(""));
+                    let is_directory = base.to_string_lossy().ends_with('/');
+                    let directory = if is_directory {
+                        base.as_path()
+                    } else {
+                        base.parent().unwrap_or(Path::new(""))
+                    };
                     Ok(Location::File(directory.join(path)))
                 }
             }

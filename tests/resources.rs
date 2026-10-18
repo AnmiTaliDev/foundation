@@ -304,3 +304,311 @@ fn http_errors_are_reported() {
     handle.join().unwrap();
     assert!(result.is_err());
 }
+
+const GREEN: Color = Color { r: 0, g: 255, b: 0 };
+
+fn write(directory: &std::path::Path, name: &str, content: &str) {
+    let path = directory.join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, content).unwrap();
+}
+
+fn open_file(directory: &std::path::Path, name: &str) -> Page {
+    Page::open(directory.join(name).to_str().unwrap()).unwrap()
+}
+
+#[test]
+fn file_base_with_a_trailing_slash_is_a_directory() {
+    let base = Location::File(PathBuf::from("/site/pages/"));
+    assert_eq!(
+        base.resolve("a.css").unwrap(),
+        Location::File(PathBuf::from("/site/pages/a.css"))
+    );
+    let file = Location::File(PathBuf::from("/site/pages"));
+    assert_eq!(
+        file.resolve("a.css").unwrap(),
+        Location::File(PathBuf::from("/site/a.css"))
+    );
+}
+
+#[test]
+fn base_href_changes_where_subresources_are_loaded_from() {
+    let directory = temp_dir("base");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><base href=\"assets/\"><link rel=\"stylesheet\" href=\"s.css\"></head><body><img src=\"p.png\"></body></html>",
+    );
+    write(
+        &directory,
+        "assets/s.css",
+        "body { margin: 0 } img { display: block }",
+    );
+    fs::write(
+        directory.join("assets/p.png"),
+        png_bytes(2, 2, [255, 0, 0, 255]),
+    )
+    .unwrap();
+    let page = open_file(&directory, "index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    let canvas = page.render(10, 10, 0.0).canvas;
+    assert_eq!(canvas.pixel(0, 0), RED);
+    assert_eq!(canvas.pixel(1, 1), RED);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn base_href_is_resolved_against_the_document_and_only_the_first_counts() {
+    let directory = temp_dir("base-first");
+    write(
+        &directory,
+        "pages/index.html",
+        "<html><head><base target=\"_blank\"><base href=\"../shared\"><base href=\"other/\"><link rel=\"stylesheet\" href=\"s.css\"></head><body></body></html>",
+    );
+    write(&directory, "s.css", "body { background-color: red }");
+    write(
+        &directory,
+        "shared/s.css",
+        "body { background-color: lime }",
+    );
+    write(
+        &directory,
+        "pages/other/s.css",
+        "body { background-color: blue }",
+    );
+    let page = open_file(&directory, "pages/index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), RED);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn base_href_resolves_the_directory_when_it_ends_with_a_slash() {
+    let directory = temp_dir("base-dir");
+    write(
+        &directory,
+        "pages/index.html",
+        "<html><head><base href=\"../shared/\"><link rel=\"stylesheet\" href=\"s.css\"></head><body></body></html>",
+    );
+    write(
+        &directory,
+        "shared/s.css",
+        "body { background-color: lime }",
+    );
+    let page = open_file(&directory, "pages/index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), GREEN);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn unsupported_base_href_is_reported_and_ignored() {
+    let directory = temp_dir("base-bad");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><base href=\"file:///etc/\"><link rel=\"stylesheet\" href=\"s.css\"></head><body></body></html>",
+    );
+    write(&directory, "s.css", "body { background-color: lime }");
+    let page = open_file(&directory, "index.html");
+    assert_eq!(page.warnings.len(), 1, "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), GREEN);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn http_base_href_redirects_resources_of_a_local_document() {
+    let (origin, handle) = serve(vec![(
+        "/x/s.css",
+        "text/css",
+        b"body { background-color: lime }".to_vec(),
+    )]);
+    let directory = temp_dir("base-http");
+    write(
+        &directory,
+        "index.html",
+        &format!(
+            "<html><head><base href=\"{}/x/\"><link rel=\"stylesheet\" href=\"s.css\"></head><body></body></html>",
+            origin
+        ),
+    );
+    let page = open_file(&directory, "index.html");
+    handle.join().unwrap();
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), GREEN);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn imports_load_recursively_and_cascade_in_order() {
+    let directory = temp_dir("imports");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><link rel=\"stylesheet\" href=\"main.css\"></head><body><div class=\"x\"></div></body></html>",
+    );
+    write(
+        &directory,
+        "main.css",
+        "@import \"a.css\"; body { margin: 0 } .x { background-color: lime }",
+    );
+    write(
+        &directory,
+        "a.css",
+        "@import url(sub/b.css); .x { background-color: red; height: 10px }",
+    );
+    write(
+        &directory,
+        "sub/b.css",
+        "@import '../c.css'; .x { width: 10px; background-color: blue }",
+    );
+    write(&directory, "c.css", ".x { margin-left: 2px }");
+    let page = open_file(&directory, "index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    let canvas = page.render(30, 20, 0.0).canvas;
+    assert_eq!(canvas.pixel(2, 0), GREEN);
+    assert_eq!(canvas.pixel(11, 9), GREEN);
+    assert_eq!(canvas.pixel(12, 0), WHITE);
+    assert_eq!(canvas.pixel(1, 0), WHITE);
+    assert_eq!(canvas.pixel(2, 10), WHITE);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn inline_style_imports_are_relative_to_the_document() {
+    let directory = temp_dir("inline-import");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><style>@import \"s.css\"; .x { height: 5px }</style></head><body><div class=\"x\"></div></body></html>",
+    );
+    write(
+        &directory,
+        "s.css",
+        "body { margin: 0 } .x { background-color: lime }",
+    );
+    let page = open_file(&directory, "index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    let canvas = page.render(10, 10, 0.0).canvas;
+    assert_eq!(canvas.pixel(0, 4), GREEN);
+    assert_eq!(canvas.pixel(0, 5), WHITE);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn import_cycles_terminate() {
+    let directory = temp_dir("cycle");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><link rel=\"stylesheet\" href=\"a.css\"></head><body></body></html>",
+    );
+    write(
+        &directory,
+        "a.css",
+        "@import \"b.css\"; body { margin: 0; background-color: red }",
+    );
+    write(
+        &directory,
+        "b.css",
+        "@import \"a.css\"; @import \"b.css\"; body { height: 5px }",
+    );
+    let page = open_file(&directory, "index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    assert_eq!(page.render(10, 10, 0.0).canvas.pixel(0, 0), RED);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn imports_for_other_media_are_skipped_without_loading() {
+    let directory = temp_dir("media");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><link rel=\"stylesheet\" href=\"main.css\"><link rel=\"stylesheet\" media=\"print\" href=\"print.css\"><link rel=\"stylesheet\" media=\"(prefers-color-scheme: dark)\" href=\"missing.css\"></head><body></body></html>",
+    );
+    write(
+        &directory,
+        "main.css",
+        "@import \"print.css\" print; @import \"gone.css\" (min-width: 10px); body { background-color: lime }",
+    );
+    write(&directory, "print.css", "body { background-color: red }");
+    let page = open_file(&directory, "index.html");
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), GREEN);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn missing_imports_are_warnings_and_the_rest_still_applies() {
+    let directory = temp_dir("import-missing");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><link rel=\"stylesheet\" href=\"main.css\"></head><body></body></html>",
+    );
+    write(
+        &directory,
+        "main.css",
+        "@import \"none.css\"; @import \"file:///etc/passwd\"; body { background-color: lime }",
+    );
+    let page = open_file(&directory, "index.html");
+    assert_eq!(page.warnings.len(), 2, "{:?}", page.warnings);
+    assert_eq!(page.render(4, 4, 0.0).canvas.pixel(0, 0), GREEN);
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn import_depth_is_limited() {
+    let directory = temp_dir("depth");
+    write(
+        &directory,
+        "index.html",
+        "<html><head><link rel=\"stylesheet\" href=\"c0.css\"></head><body></body></html>",
+    );
+    for level in 0..12 {
+        write(
+            &directory,
+            &format!("c{}.css", level),
+            &format!(
+                "@import \"c{}.css\"; body {{ margin: {}px }}",
+                level + 1,
+                level
+            ),
+        );
+    }
+    let page = open_file(&directory, "index.html");
+    assert!(
+        page.warnings.iter().any(|w| w.contains("deeper than")),
+        "{:?}",
+        page.warnings
+    );
+    fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn imports_over_http_resolve_against_the_sheet_location() {
+    let html = "<html><head><link rel=\"stylesheet\" href=\"/css/main.css\"></head><body><div class=\"x\"></div></body></html>";
+    let main = "@import \"parts/a.css\"; @import \"/abs/b.css\"; body { margin: 0 } .x { background-color: lime }";
+    let (origin, handle) = serve(vec![
+        ("/page.html", "text/html", html.as_bytes().to_vec()),
+        ("/css/main.css", "text/css", main.as_bytes().to_vec()),
+        (
+            "/css/parts/a.css",
+            "text/css",
+            b".x { height: 10px }".to_vec(),
+        ),
+        (
+            "/abs/b.css",
+            "text/css",
+            b".x { width: 10px; background-color: blue }".to_vec(),
+        ),
+    ]);
+    let page = Page::open(&format!("{}/page.html", origin)).unwrap();
+    handle.join().unwrap();
+    assert!(page.warnings.is_empty(), "{:?}", page.warnings);
+    let canvas = page.render(20, 20, 0.0).canvas;
+    assert_eq!(canvas.pixel(9, 9), GREEN);
+    assert_eq!(canvas.pixel(10, 0), WHITE);
+    assert_eq!(canvas.pixel(0, 10), WHITE);
+}

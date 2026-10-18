@@ -189,23 +189,142 @@ impl Selector {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub url: String,
+    pub media: String,
+}
+
+enum TopLevel<'a> {
+    Statement(&'a str),
+    Block { prelude: &'a str, body: &'a str },
+}
+
+fn scan_top_level(source: &str) -> Vec<TopLevel<'_>> {
+    let mut items = Vec::new();
+    let mut start = 0;
+    let mut prelude_end = 0;
+    let mut body_start = 0;
+    let mut braces = 0usize;
+    let mut parens = 0usize;
+    let mut quote: Option<char> = None;
+    for (index, c) in source.char_indices() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' => parens += 1,
+            ')' => parens = parens.saturating_sub(1),
+            ';' if braces == 0 && parens == 0 => {
+                let text = source[start..index].trim();
+                if !text.is_empty() {
+                    items.push(TopLevel::Statement(text));
+                }
+                start = index + 1;
+            }
+            '{' => {
+                if braces == 0 {
+                    prelude_end = index;
+                    body_start = index + 1;
+                }
+                braces += 1;
+            }
+            '}' => {
+                if braces == 0 {
+                    start = index + 1;
+                } else {
+                    braces -= 1;
+                    if braces == 0 {
+                        items.push(TopLevel::Block {
+                            prelude: source[start..prelude_end].trim(),
+                            body: &source[body_start..index],
+                        });
+                        start = index + 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if braces > 0 {
+        items.push(TopLevel::Block {
+            prelude: source[start..prelude_end].trim(),
+            body: &source[body_start..],
+        });
+    }
+    items
+}
+
 pub fn parse(source: &str) -> Stylesheet {
     let source = strip_comments(source);
     let mut rules = Vec::new();
-    let mut rest = source.as_str();
-    while let Some(open) = rest.find('{') {
-        let selector_text = &rest[..open];
-        let after = &rest[open + 1..];
-        let (block, remaining) = match after.find('}') {
-            Some(close) => (&after[..close], &after[close + 1..]),
-            None => (after, ""),
-        };
-        if let Some(rule) = parse_rule(selector_text, block) {
-            rules.push(rule);
+    for item in scan_top_level(&source) {
+        if let TopLevel::Block { prelude, body } = item {
+            if prelude.starts_with('@') {
+                continue;
+            }
+            if let Some(rule) = parse_rule(prelude, body) {
+                rules.push(rule);
+            }
         }
-        rest = remaining;
     }
     Stylesheet { rules }
+}
+
+pub fn parse_imports(source: &str) -> Vec<Import> {
+    let source = strip_comments(source);
+    let mut imports = Vec::new();
+    for item in scan_top_level(&source) {
+        match item {
+            TopLevel::Statement(text) => {
+                let Some(prefix) = text.get(..7) else {
+                    continue;
+                };
+                if prefix.eq_ignore_ascii_case("@import") {
+                    if let Some(import) = parse_import(&text[7..]) {
+                        imports.push(import);
+                    }
+                }
+            }
+            TopLevel::Block { .. } => break,
+        }
+    }
+    imports
+}
+
+fn parse_import(text: &str) -> Option<Import> {
+    let text = text.trim();
+    let (url, rest) = if let Some(after) = text.strip_prefix("url(") {
+        let close = after.find(')')?;
+        (unquote(after[..close].trim())?, &after[close + 1..])
+    } else {
+        let quote = text.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let inner = &text[1..];
+        let close = inner.find(quote)?;
+        (inner[..close].to_string(), &inner[close + 1..])
+    };
+    if url.trim().is_empty() {
+        return None;
+    }
+    Some(Import {
+        url,
+        media: rest.trim().to_string(),
+    })
+}
+
+fn unquote(text: &str) -> Option<String> {
+    let first = text.chars().next()?;
+    if first == '"' || first == '\'' {
+        let inner = &text[1..];
+        let close = inner.find(first)?;
+        Some(inner[..close].to_string())
+    } else {
+        Some(text.to_string())
+    }
 }
 
 fn strip_comments(source: &str) -> String {

@@ -152,11 +152,29 @@ fn is_stylesheet_link(element: &ElementData) -> bool {
             is_stylesheet = true;
         }
     }
-    let is_print = match element.attributes.get("media") {
-        Some(media) => media.trim().eq_ignore_ascii_case("print"),
-        None => false,
+    let applies = match element.attributes.get("media") {
+        Some(media) => media_applies(media),
+        None => true,
     };
-    is_stylesheet && !is_print
+    is_stylesheet && applies
+}
+
+pub fn media_applies(media: &str) -> bool {
+    if media.trim().is_empty() {
+        return true;
+    }
+    for query in media.split(',') {
+        let query = query.trim().to_ascii_lowercase();
+        let query = query.strip_prefix("only ").unwrap_or(&query).trim_start();
+        for kind in ["all", "screen"] {
+            if let Some(rest) = query.strip_prefix(kind) {
+                if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn build_stylesheet(author_css: &str) -> Stylesheet {

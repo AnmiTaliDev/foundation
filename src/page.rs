@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use fontdue::Font;
 
-use crate::css::Stylesheet;
+use crate::css::{self, Stylesheet};
 use crate::dom::{Node, NodeType};
 use crate::layout::{self, ImageMap};
 use crate::loader;
@@ -13,6 +14,9 @@ use crate::paint::{self, Canvas};
 use crate::picture;
 use crate::style::{self, StyleSource};
 use crate::{html, text};
+
+const MAX_IMPORT_DEPTH: usize = 8;
+const MAX_STYLESHEETS: usize = 64;
 
 pub struct Page {
     document: Node,
@@ -48,20 +52,24 @@ impl Page {
         Ok(Page::with_location(&source, &location))
     }
 
-    pub fn with_location(source: &str, base: &Location) -> Page {
+    pub fn with_location(source: &str, location: &Location) -> Page {
         let document = html::parse(source);
         let mut warnings = Vec::new();
+        let base = document_base(&document, location, &mut warnings);
 
-        let mut author_css = String::new();
+        let mut sheets = Sheets {
+            visited: HashSet::new(),
+            loaded: 0,
+            css: String::new(),
+            warnings: Vec::new(),
+        };
         for style_source in style::style_sources(&document) {
             match style_source {
-                StyleSource::Inline(text) => author_css.push_str(&text),
-                StyleSource::Link(href) => match load_stylesheet(base, &href) {
-                    Ok(text) => author_css.push_str(&text),
-                    Err(message) => warnings.push(message),
-                },
+                StyleSource::Inline(text) => add_stylesheet(&text, &base, 0, &mut sheets),
+                StyleSource::Link(href) => add_linked_stylesheet(&href, &base, &mut sheets),
             }
         }
+        warnings.append(&mut sheets.warnings);
 
         let mut images = ImageMap::new();
         let mut sources = Vec::new();
@@ -70,7 +78,7 @@ impl Page {
             if images.contains_key(&src) {
                 continue;
             }
-            match load_picture(base, &src) {
+            match load_picture(&base, &src) {
                 Ok(loaded) => {
                     images.insert(src, Rc::new(loaded));
                 }
@@ -79,7 +87,7 @@ impl Page {
         }
 
         Page {
-            stylesheet: style::build_stylesheet(&author_css),
+            stylesheet: style::build_stylesheet(&sheets.css),
             document,
             font: text::default_font(),
             images,
@@ -111,12 +119,115 @@ impl Page {
     }
 }
 
-fn load_stylesheet(base: &Location, href: &str) -> Result<String, String> {
-    let location = base
-        .resolve(href)
-        .map_err(|error| format!("stylesheet {}: {}", href, error))?;
-    let bytes = loader::fetch(&location, loader::MAX_DOCUMENT_SIZE)?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+struct Sheets {
+    visited: HashSet<String>,
+    loaded: usize,
+    css: String,
+    warnings: Vec<String>,
+}
+
+fn find_base_href(node: &Node) -> Option<String> {
+    if let NodeType::Element(element) = &node.node_type {
+        if element.tag_name == "base" {
+            if let Some(href) = element.attributes.get("href") {
+                return Some(href.clone());
+            }
+        }
+    }
+    for child in &node.children {
+        if let Some(href) = find_base_href(child) {
+            return Some(href);
+        }
+    }
+    None
+}
+
+fn document_base(document: &Node, location: &Location, warnings: &mut Vec<String>) -> Location {
+    let Some(href) = find_base_href(document) else {
+        return location.clone();
+    };
+    if href.trim().is_empty() {
+        return location.clone();
+    }
+    match location.resolve(&href) {
+        Ok(base) => base,
+        Err(error) => {
+            warnings.push(format!("base {}: {}", href, error));
+            location.clone()
+        }
+    }
+}
+
+fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets) {
+    for import in css::parse_imports(text) {
+        if !style::media_applies(&import.media) {
+            continue;
+        }
+        if depth >= MAX_IMPORT_DEPTH {
+            sheets.warnings.push(format!(
+                "@import {} is nested deeper than {} levels",
+                import.url, MAX_IMPORT_DEPTH
+            ));
+            continue;
+        }
+        let location = match base.resolve(&import.url) {
+            Ok(location) => location,
+            Err(error) => {
+                sheets
+                    .warnings
+                    .push(format!("@import {}: {}", import.url, error));
+                continue;
+            }
+        };
+        if !sheets.visited.insert(location.to_string()) {
+            continue;
+        }
+        if sheets.loaded >= MAX_STYLESHEETS {
+            sheets.warnings.push(format!(
+                "@import {} skipped: more than {} stylesheets",
+                import.url, MAX_STYLESHEETS
+            ));
+            continue;
+        }
+        sheets.loaded += 1;
+        match loader::fetch(&location, loader::MAX_DOCUMENT_SIZE) {
+            Ok(bytes) => {
+                let imported = String::from_utf8_lossy(&bytes).into_owned();
+                add_stylesheet(&imported, &location, depth + 1, sheets);
+            }
+            Err(message) => sheets.warnings.push(message),
+        }
+    }
+    sheets.css.push_str(text);
+    sheets.css.push('\n');
+}
+
+fn add_linked_stylesheet(href: &str, base: &Location, sheets: &mut Sheets) {
+    let location = match base.resolve(href) {
+        Ok(location) => location,
+        Err(error) => {
+            sheets
+                .warnings
+                .push(format!("stylesheet {}: {}", href, error));
+            return;
+        }
+    };
+    if sheets.loaded >= MAX_STYLESHEETS {
+        sheets.warnings.push(format!(
+            "stylesheet {} skipped: more than {} stylesheets",
+            href, MAX_STYLESHEETS
+        ));
+        return;
+    }
+    sheets.visited.insert(location.to_string());
+    sheets.loaded += 1;
+    match loader::fetch(&location, loader::MAX_DOCUMENT_SIZE) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            add_stylesheet(&text, &location, 0, sheets);
+        }
+        Err(message) => sheets.warnings.push(message),
+    }
 }
 
 fn load_picture(base: &Location, src: &str) -> Result<picture::Picture, String> {
