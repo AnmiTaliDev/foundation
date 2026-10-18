@@ -77,7 +77,7 @@ impl Page {
         let mut sources = Vec::new();
         collect_image_sources(&document, &mut sources);
         for rule in &sheets.rules {
-            for declaration in &rule.declarations {
+            for declaration in rule.declarations.iter().chain(&rule.important) {
                 if let Value::Url(url) = &declaration.value {
                     sources.push(url.clone());
                 }
@@ -217,7 +217,7 @@ fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets
     }
     let mut parsed = css::parse(text);
     for rule in &mut parsed.rules {
-        for declaration in &mut rule.declarations {
+        for declaration in rule.declarations.iter_mut().chain(&mut rule.important) {
             if let Value::Url(url) = &mut declaration.value {
                 if let Ok(location) = base.resolve(url) {
                     *url = location.to_string();

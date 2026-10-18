@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::css::{self, Color, Combinator, Rule, Selector, Specificity, Stylesheet, Value};
+use crate::css::{
+    self, Color, Combinator, Declaration, Rule, Selector, Specificity, Stylesheet, Value,
+};
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
 
@@ -356,6 +358,8 @@ fn resolve_line_height(values: &mut PropertyMap) {
     }
 }
 
+type CascadeKey = (bool, usize, bool, Specificity);
+
 fn specified_values(
     element: &ElementData,
     ancestors: &[&ElementData],
@@ -363,7 +367,8 @@ fn specified_values(
     inherited: PropertyMap,
 ) -> PropertyMap {
     let viewport = context.viewport;
-    let mut matched: Vec<((usize, Specificity), &Rule)> = Vec::new();
+    let layers = &context.stylesheet.layers;
+    let mut entries: Vec<(CascadeKey, &Declaration)> = Vec::new();
     for rule in &context.stylesheet.rules {
         if !rule
             .media
@@ -372,31 +377,38 @@ fn specified_values(
         {
             continue;
         }
-        if let Some(specificity) = match_rule(element, ancestors, rule) {
-            let rank = match &rule.layer {
-                Some(path) => context
-                    .stylesheet
-                    .layers
-                    .iter()
-                    .position(|layer| layer == path)
-                    .unwrap_or(usize::MAX),
-                None => usize::MAX,
-            };
-            matched.push(((rank, specificity), rule));
+        let Some(specificity) = match_rule(element, ancestors, rule) else {
+            continue;
+        };
+        let layer = rule
+            .layer
+            .as_ref()
+            .and_then(|path| layers.iter().position(|layer| layer == path));
+        let normal_rank = layer.unwrap_or(usize::MAX);
+        let important_rank = layer.map_or(0, |index| layers.len() - index);
+        for declaration in &rule.declarations {
+            entries.push(((false, normal_rank, false, specificity), declaration));
+        }
+        for declaration in &rule.important {
+            entries.push(((true, important_rank, false, specificity), declaration));
         }
     }
-    matched.sort_by_key(|entry| entry.0);
+    let inline = element
+        .attributes
+        .get("style")
+        .map(|text| css::parse_declaration_block(text))
+        .unwrap_or_default();
+    for declaration in &inline.normal {
+        entries.push(((false, usize::MAX, true, (0, 0, 0)), declaration));
+    }
+    for declaration in &inline.important {
+        entries.push(((true, usize::MAX, true, (0, 0, 0)), declaration));
+    }
+    entries.sort_by_key(|entry| entry.0);
 
     let mut values = inherited;
-    for (_, rule) in matched {
-        for declaration in &rule.declarations {
-            values.insert(declaration.name.clone(), declaration.value.clone());
-        }
-    }
-    if let Some(inline) = element.attributes.get("style") {
-        for declaration in css::parse_declarations(inline) {
-            values.insert(declaration.name, declaration.value);
-        }
+    for (_, declaration) in entries {
+        values.insert(declaration.name.clone(), declaration.value.clone());
     }
     values
 }

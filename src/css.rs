@@ -14,6 +14,7 @@ pub struct Stylesheet {
 pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
+    pub important: Vec<Declaration>,
     pub media: Vec<MediaList>,
     pub layer: Option<String>,
 }
@@ -442,20 +443,53 @@ fn parse_rule(selector_text: &str, block: &str) -> Option<Rule> {
     for part in selector_text.split(',') {
         selectors.push(parse_selector(part.trim())?);
     }
+    let block = parse_declaration_block(block);
     Some(Rule {
         selectors,
-        declarations: parse_declarations(block),
+        declarations: block.normal,
+        important: block.important,
         media: Vec::new(),
         layer: None,
     })
 }
 
-pub fn parse_declarations(block: &str) -> Vec<Declaration> {
-    let mut declarations = Vec::new();
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct DeclarationBlock {
+    pub normal: Vec<Declaration>,
+    pub important: Vec<Declaration>,
+}
+
+pub fn parse_declaration_block(block: &str) -> DeclarationBlock {
+    let mut result = DeclarationBlock::default();
     for item in block.split(';') {
-        declarations.extend(parse_declaration(item));
+        let (item, important) = split_important(item);
+        let target = if important {
+            &mut result.important
+        } else {
+            &mut result.normal
+        };
+        target.extend(parse_declaration(item));
     }
-    declarations
+    result
+}
+
+pub fn parse_declarations(block: &str) -> Vec<Declaration> {
+    let mut block = parse_declaration_block(block);
+    block.normal.append(&mut block.important);
+    block.normal
+}
+
+fn split_important(item: &str) -> (&str, bool) {
+    let trimmed = item.trim_end();
+    if let Some(position) = trimmed.rfind('!') {
+        if trimmed[position + 1..]
+            .trim()
+            .eq_ignore_ascii_case("important")
+        {
+            return (&trimmed[..position], true);
+        }
+    }
+    (item, false)
 }
 
 fn is_ident_char(c: char) -> bool {
