@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::calc::{self, Linear};
+use crate::color::{self, Rgba};
+use crate::gradient::{self, Gradient};
 use crate::media::MediaList;
 use crate::supports;
 use crate::transform::{self, Function};
@@ -68,6 +70,8 @@ pub enum Value {
     Url(String),
     Families(Vec<String>),
     Transform(Vec<Function>),
+    Rgba(Color, u8),
+    Gradient(Gradient),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -672,7 +676,25 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
         return expand_gap(value);
     }
     if name == "background" {
-        return expand_background(value);
+        let layers = gradient::split_top_level(value);
+        let mut declarations = expand_background(layers[0]);
+        if layers.len() > 1 {
+            declarations.retain(|d| d.name != "background-color");
+            declarations.extend(
+                expand_background(layers[layers.len() - 1])
+                    .into_iter()
+                    .filter(|d| d.name == "background-color"),
+            );
+        }
+        return declarations;
+    }
+    if name == "background-image" {
+        return match parse_value(gradient::split_top_level(value)[0]) {
+            Some(value @ (Value::Url(_) | Value::Gradient(_) | Value::Keyword(_))) => {
+                vec![Declaration { name, value }]
+            }
+            _ => Vec::new(),
+        };
     }
     if name == "font-family" {
         return match parse_families(value) {
@@ -770,9 +792,13 @@ fn expand_background(text: &str) -> Vec<Declaration> {
                 name: "background-color".to_string(),
                 value: Value::Color(color),
             }),
-            Some(Value::Url(url)) => declarations.push(Declaration {
+            Some(Value::Rgba(color, alpha)) => declarations.push(Declaration {
+                name: "background-color".to_string(),
+                value: Value::Rgba(color, alpha),
+            }),
+            Some(value @ (Value::Url(_) | Value::Gradient(_))) => declarations.push(Declaration {
                 name: "background-image".to_string(),
-                value: Value::Url(url),
+                value,
             }),
             Some(Value::Keyword(keyword)) if is_repeat_keyword(&keyword) => {
                 declarations.push(Declaration {
@@ -1162,6 +1188,10 @@ fn expand_border(text: &str) -> Vec<Declaration> {
                 name: "border-color".to_string(),
                 value: Value::Color(color),
             }),
+            Some(Value::Rgba(color, alpha)) => declarations.push(Declaration {
+                name: "border-color".to_string(),
+                value: Value::Rgba(color, alpha),
+            }),
             Some(width @ (Value::Length(_) | Value::Em(_))) => {
                 push_border_widths(&mut declarations, width);
             }
@@ -1249,18 +1279,19 @@ fn parse_value(text: &str) -> Option<Value> {
     if text.starts_with("light-dark(") {
         return parse_light_dark(text);
     }
-    if first == '#' {
-        return parse_hex_color(&text[1..]).map(Value::Color);
+    if first == '#' || is_color_function(text) {
+        return color::parse(text).map(color_value);
+    }
+    if is_gradient_function(text) {
+        return gradient::parse(text).map(Value::Gradient);
     }
     if first.is_ascii_digit() || first == '.' || first == '-' {
         return parse_dimension(text);
     }
     if text.chars().all(is_ident_char) {
         let keyword = text.to_ascii_lowercase();
-        for (name, color) in NAMED_COLORS {
-            if keyword == name {
-                return Some(Value::Color(color));
-            }
+        if let Some(rgba) = color::parse(&keyword) {
+            return Some(color_value(rgba));
         }
         return Some(Value::Keyword(keyword));
     }
@@ -1302,21 +1333,36 @@ fn parse_dimension(text: &str) -> Option<Value> {
     }
 }
 
-fn parse_hex_color(hex: &str) -> Option<Color> {
-    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+fn color_value(rgba: Rgba) -> Value {
+    if rgba.alpha == 255 {
+        Value::Color(rgba.color)
+    } else {
+        Value::Rgba(rgba.color, rgba.alpha)
     }
-    match hex.len() {
-        6 => Some(Color {
-            r: u8::from_str_radix(&hex[0..2], 16).ok()?,
-            g: u8::from_str_radix(&hex[2..4], 16).ok()?,
-            b: u8::from_str_radix(&hex[4..6], 16).ok()?,
-        }),
-        3 => Some(Color {
-            r: u8::from_str_radix(&hex[0..1], 16).ok()? * 17,
-            g: u8::from_str_radix(&hex[1..2], 16).ok()? * 17,
-            b: u8::from_str_radix(&hex[2..3], 16).ok()? * 17,
-        }),
-        _ => None,
-    }
+}
+
+fn is_color_function(text: &str) -> bool {
+    let lower = text.get(..5).unwrap_or(text).to_ascii_lowercase();
+    ["rgb(", "rgba(", "hsl(", "hsla("]
+        .iter()
+        .any(|name| lower.starts_with(name))
+}
+
+fn is_gradient_function(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "linear-gradient(",
+        "radial-gradient(",
+        "repeating-linear-gradient(",
+        "repeating-radial-gradient(",
+    ]
+    .iter()
+    .any(|name| lower.starts_with(name))
+}
+
+pub(crate) fn named_color(name: &str) -> Option<Color> {
+    NAMED_COLORS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, color)| *color)
 }

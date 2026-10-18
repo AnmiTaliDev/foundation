@@ -2,7 +2,9 @@
 
 use std::rc::Rc;
 
+use crate::color::Rgba;
 use crate::composite;
+use crate::gradient::Gradient;
 use crate::text::Fonts;
 use crate::transform::Matrix;
 
@@ -23,6 +25,7 @@ const WHITE: Color = Color {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolidRect {
     pub color: Color,
+    pub alpha: u8,
     pub rect: Rect,
 }
 
@@ -32,6 +35,7 @@ pub enum DisplayCommand {
     Text(Fragment),
     Image(ImageFragment),
     Tiles(Tiles),
+    GradientTiles(GradientTiles),
     BeginGroup(Group),
     EndGroup,
 }
@@ -40,6 +44,16 @@ pub enum DisplayCommand {
 pub struct Group {
     pub opacity: f32,
     pub transform: Option<Matrix>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientTiles {
+    pub clip: Rect,
+    pub tile: Rect,
+    pub repeat_x: bool,
+    pub repeat_y: bool,
+    pub gradient: Rc<Gradient>,
+    pub font_size: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +100,12 @@ impl Canvas {
             .round() as usize;
         for y in y0..y1 {
             for x in x0..x1 {
-                self.pixels[y * self.width + x] = item.color;
+                let index = y * self.width + x;
+                self.pixels[index] = if item.alpha == 255 {
+                    item.color
+                } else {
+                    blend(self.pixels[index], item.color, item.alpha)
+                };
             }
         }
     }
@@ -100,7 +119,9 @@ impl Canvas {
             let top = baseline - metrics.height as i64 - i64::from(metrics.ymin);
             for row in 0..metrics.height {
                 for col in 0..metrics.width {
-                    let coverage = bitmap[row * metrics.width + col];
+                    let coverage = (u32::from(bitmap[row * metrics.width + col])
+                        * u32::from(fragment.alpha)
+                        / 255) as u8;
                     let x = left + col as i64;
                     let y = top + row as i64;
                     if coverage == 0
@@ -149,6 +170,41 @@ impl Canvas {
                     g: picture.rgba[offset + 1],
                     b: picture.rgba[offset + 2],
                 };
+                let index = y * self.width + x;
+                self.pixels[index] = blend(self.pixels[index], color, alpha);
+            }
+        }
+    }
+
+    fn draw_gradient(&mut self, tiles: &GradientTiles) {
+        let tile = tiles.tile;
+        if tile.width <= 0.0 || tile.height <= 0.0 {
+            return;
+        }
+        let prepared = tiles
+            .gradient
+            .prepare(tile.width, tile.height, tiles.font_size);
+        let x_start = tiles.clip.x.round().clamp(0.0, self.width as f32) as usize;
+        let y_start = tiles.clip.y.round().clamp(0.0, self.height as f32) as usize;
+        let x_end = (tiles.clip.x + tiles.clip.width)
+            .round()
+            .clamp(0.0, self.width as f32) as usize;
+        let y_end = (tiles.clip.y + tiles.clip.height)
+            .round()
+            .clamp(0.0, self.height as f32) as usize;
+        for y in y_start..y_end {
+            let Some(dy) = tile_offset(y as f32 + 0.5 - tile.y, tile.height, tiles.repeat_y) else {
+                continue;
+            };
+            for x in x_start..x_end {
+                let Some(dx) = tile_offset(x as f32 + 0.5 - tile.x, tile.width, tiles.repeat_x)
+                else {
+                    continue;
+                };
+                let (color, alpha) = prepared.color_at(dx, dy);
+                if alpha == 0 {
+                    continue;
+                }
                 let index = y * self.width + x;
                 self.pixels[index] = blend(self.pixels[index], color, alpha);
             }
@@ -220,6 +276,16 @@ impl Canvas {
             out.push(pixel.b);
         }
         out
+    }
+}
+
+fn tile_offset(offset: f32, size: f32, repeat: bool) -> Option<f32> {
+    if repeat {
+        Some(offset.rem_euclid(size))
+    } else if offset < 0.0 || offset >= size {
+        None
+    } else {
+        Some(offset)
     }
 }
 
@@ -298,6 +364,12 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                 shifted.tile.y -= offset;
                 canvas.draw_tiles(&shifted);
             }
+            DisplayCommand::GradientTiles(tiles) => {
+                let mut shifted = tiles.clone();
+                shifted.clip.y -= offset;
+                shifted.tile.y -= offset;
+                canvas.draw_gradient(&shifted);
+            }
             DisplayCommand::BeginGroup(group) => {
                 let end = index + group_end(&list[index..]);
                 let inner = &list[index..end];
@@ -331,8 +403,14 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
 }
 
 fn canvas_background(root: &LayoutBox) -> Color {
+    let over_white = |style: &crate::style::StyledNode| {
+        style
+            .rgba("background-color")
+            .filter(|rgba| rgba.alpha > 0)
+            .map(|rgba| blend(WHITE, rgba.color, rgba.alpha))
+    };
     if let BoxKind::Block(style) = root.kind {
-        if let Some(color) = style.background() {
+        if let Some(color) = over_white(style) {
             return color;
         }
     }
@@ -340,7 +418,7 @@ fn canvas_background(root: &LayoutBox) -> Color {
         if let BoxKind::Block(style) = child.kind {
             if let Content::Element(element) = style.content {
                 if element.tag_name == "body" {
-                    return style.background().unwrap_or(WHITE);
+                    return over_white(style).unwrap_or(WHITE);
                 }
             }
         }
@@ -388,12 +466,17 @@ fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
         if let Some(color) = inline_box.background {
             commands.push(DisplayCommand::Rect(SolidRect {
                 color,
+                alpha: 255,
                 rect: inline_box.rect,
             }));
         }
         if let Some(color) = inline_box.border_color {
             for rect in border_edges(&inline_box.rect, inline_box.border) {
-                commands.push(DisplayCommand::Rect(SolidRect { color, rect }));
+                commands.push(DisplayCommand::Rect(SolidRect {
+                    color,
+                    alpha: 255,
+                    rect,
+                }));
             }
         }
     }
@@ -510,10 +593,34 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
-    if let Some(color) = style.background() {
-        list.push(DisplayCommand::Rect(SolidRect {
-            color,
-            rect: layout_box.dimensions.border_box(),
+    if let Some(Rgba { color, alpha }) = style.rgba("background-color") {
+        if alpha > 0 {
+            list.push(DisplayCommand::Rect(SolidRect {
+                color,
+                alpha,
+                rect: layout_box.dimensions.border_box(),
+            }));
+        }
+    }
+    if let Some(gradient) = style.background_gradient() {
+        let origin = layout_box.dimensions.padding_box();
+        let area = (origin.width, origin.height);
+        let (width, height) = style.background_size(area, area);
+        let (repeat_x, repeat_y) = style.background_repeat();
+        list.push(DisplayCommand::GradientTiles(GradientTiles {
+            clip: layout_box.dimensions.border_box(),
+            tile: Rect {
+                x: origin.x
+                    + style.background_offset("background-position-x", origin.width - width),
+                y: origin.y
+                    + style.background_offset("background-position-y", origin.height - height),
+                width,
+                height,
+            },
+            repeat_x,
+            repeat_y,
+            gradient: Rc::new(gradient.clone()),
+            font_size: style.font_size(),
         }));
     }
     let Some(picture) = &layout_box.background_picture else {
@@ -543,6 +650,8 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
 
 fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {
     let [top, right, bottom, left] = widths;
+    let side_top = border_box.y + top;
+    let side_height = (border_box.height - top - bottom).max(0.0);
     [
         Rect {
             x: border_box.x,
@@ -552,9 +661,9 @@ fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {
         },
         Rect {
             x: border_box.x + border_box.width - right,
-            y: border_box.y,
+            y: side_top,
             width: right,
-            height: border_box.height,
+            height: side_height,
         },
         Rect {
             x: border_box.x,
@@ -564,9 +673,9 @@ fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {
         },
         Rect {
             x: border_box.x,
-            y: border_box.y,
+            y: side_top,
             width: left,
-            height: border_box.height,
+            height: side_height,
         },
     ]
 }
@@ -575,12 +684,12 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
-    let Some(color) = style.color("border-color") else {
+    let Some(Rgba { color, alpha }) = style.rgba("border-color") else {
         return;
     };
     let d = &layout_box.dimensions;
     let widths = [d.border.top, d.border.right, d.border.bottom, d.border.left];
     for rect in border_edges(&d.border_box(), widths) {
-        list.push(DisplayCommand::Rect(SolidRect { color, rect }));
+        list.push(DisplayCommand::Rect(SolidRect { color, alpha, rect }));
     }
 }

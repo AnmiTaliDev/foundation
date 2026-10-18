@@ -13,6 +13,7 @@ use crate::text::Fonts;
 pub struct Run<'a> {
     pub text: &'a str,
     pub color: Color,
+    pub alpha: u8,
     pub font_size: f32,
     pub line_height: Option<f32>,
     pub families: &'a [String],
@@ -69,6 +70,7 @@ pub struct Fragment {
     pub baseline: f32,
     pub text: String,
     pub color: Color,
+    pub alpha: u8,
     pub font_size: f32,
     pub face: usize,
 }
@@ -396,6 +398,7 @@ fn finish_line(
                     baseline,
                     text: word_text.to_string(),
                     color: run.color,
+                    alpha: run.alpha,
                     font_size: run.font_size,
                     face: *face,
                 });

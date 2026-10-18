@@ -219,6 +219,7 @@ fn collect_child<'a>(
             Content::Text(text) => flow.items.push(InlineItem::Text(Run {
                 text,
                 color: node.text_color(),
+                alpha: node.text_alpha(),
                 font_size: node.font_size(),
                 line_height: node.line_height(),
                 families: node.font_families(),

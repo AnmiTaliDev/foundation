@@ -114,7 +114,7 @@ pub fn parse(text: &str) -> Option<Vec<Function>> {
     }
 }
 
-fn parse_amount(text: &str) -> Option<Amount> {
+pub(crate) fn parse_amount(text: &str) -> Option<Amount> {
     if let Some(number) = text.strip_suffix("px") {
         return number.trim().parse().ok().map(Amount::Px);
     }
@@ -134,7 +134,7 @@ fn parse_number(text: &str) -> Option<f32> {
     text.parse::<f32>().ok().filter(|number| number.is_finite())
 }
 
-fn parse_angle(text: &str) -> Option<f32> {
+pub(crate) fn parse_angle(text: &str) -> Option<f32> {
     let (number, factor) = if let Some(number) = text.strip_suffix("deg") {
         (number, std::f32::consts::PI / 180.0)
     } else if let Some(number) = text.strip_suffix("grad") {

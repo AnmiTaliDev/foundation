@@ -2,11 +2,13 @@
 
 use std::collections::HashMap;
 
+use crate::color::Rgba;
 use crate::css::{
     self, Color, Combinator, Declaration, Rule, Selector, Specificity, Stylesheet, Value,
 };
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
+use crate::gradient::Gradient;
 use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -787,8 +789,33 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn rgba(&self, name: &str) -> Option<Rgba> {
+        match self.value(name) {
+            Some(Value::Color(color)) => Some(Rgba {
+                color: *color,
+                alpha: 255,
+            }),
+            Some(Value::Rgba(color, alpha)) => Some(Rgba {
+                color: *color,
+                alpha: *alpha,
+            }),
+            _ => None,
+        }
+    }
+
     pub fn text_color(&self) -> Color {
-        self.color("color").unwrap_or(BLACK)
+        self.rgba("color").map_or(BLACK, |rgba| rgba.color)
+    }
+
+    pub fn text_alpha(&self) -> u8 {
+        self.rgba("color").map_or(255, |rgba| rgba.alpha)
+    }
+
+    pub fn background_gradient(&self) -> Option<&Gradient> {
+        match self.value("background-image") {
+            Some(Value::Gradient(gradient)) => Some(gradient),
+            _ => None,
+        }
     }
 
     pub fn length_or_auto(
