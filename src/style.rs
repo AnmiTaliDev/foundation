@@ -178,8 +178,12 @@ pub fn media_applies(media: &str) -> bool {
 }
 
 pub fn build_stylesheet(author_css: &str) -> Stylesheet {
+    with_author_rules(css::parse(author_css).rules)
+}
+
+pub fn with_author_rules(rules: Vec<Rule>) -> Stylesheet {
     let mut stylesheet = css::parse(USER_AGENT_STYLESHEET);
-    stylesheet.rules.extend(css::parse(author_css).rules);
+    stylesheet.rules.extend(rules);
     stylesheet
 }
 
@@ -634,6 +638,50 @@ impl<'a> StyledNode<'a> {
 
     pub fn background(&self) -> Option<Color> {
         self.color("background-color")
+    }
+
+    pub fn background_image(&self) -> Option<&str> {
+        match self.value("background-image") {
+            Some(Value::Url(url)) => Some(url),
+            _ => None,
+        }
+    }
+
+    pub fn background_repeat(&self) -> (bool, bool) {
+        match self.keyword("background-repeat") {
+            Some("repeat-x") => (true, false),
+            Some("repeat-y") => (false, true),
+            Some("no-repeat") => (false, false),
+            _ => (true, true),
+        }
+    }
+
+    pub fn background_size(&self, area: (f32, f32), natural: (f32, f32)) -> (f32, f32) {
+        let (area_width, area_height) = area;
+        let (natural_width, natural_height) = natural;
+        let scale = match self.keyword("background-size") {
+            Some("cover") => Some((area_width / natural_width).max(area_height / natural_height)),
+            Some("contain") => Some((area_width / natural_width).min(area_height / natural_height)),
+            _ => None,
+        };
+        if let Some(scale) = scale {
+            return (natural_width * scale, natural_height * scale);
+        }
+        let width = self.length_or_auto("background-size-width", None, Some(area_width));
+        let height = self.length_or_auto("background-size-height", None, Some(area_height));
+        match (width, height) {
+            (Some(width), Some(height)) => (width, height),
+            (Some(width), None) => (width, natural_height * width / natural_width),
+            (None, Some(height)) => (natural_width * height / natural_height, height),
+            (None, None) => natural,
+        }
+    }
+
+    pub fn background_offset(&self, name: &str, free: f32) -> f32 {
+        match self.value(name) {
+            Some(Value::Percent(percent)) => percent / 100.0 * free,
+            _ => self.px(name, 0.0),
+        }
     }
 
     pub fn text_color(&self) -> Color {

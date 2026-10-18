@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::rc::Rc;
+
 use fontdue::Font;
 
 use crate::css::Color;
@@ -25,6 +27,16 @@ pub enum DisplayCommand {
     Rect(SolidRect),
     Text(Fragment),
     Image(ImageFragment),
+    Tiles(Tiles),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tiles {
+    pub clip: Rect,
+    pub tile: Rect,
+    pub repeat_x: bool,
+    pub repeat_y: bool,
+    pub picture: Rc<Picture>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +143,54 @@ impl Canvas {
         }
     }
 
+    fn draw_tiles(&mut self, tiles: &Tiles) {
+        let tile = tiles.tile;
+        let picture = &tiles.picture;
+        if tile.width <= 0.0 || tile.height <= 0.0 || picture.width == 0 || picture.height == 0 {
+            return;
+        }
+        let x_start = tiles.clip.x.round().clamp(0.0, self.width as f32) as usize;
+        let y_start = tiles.clip.y.round().clamp(0.0, self.height as f32) as usize;
+        let x_end = (tiles.clip.x + tiles.clip.width)
+            .round()
+            .clamp(0.0, self.width as f32) as usize;
+        let y_end = (tiles.clip.y + tiles.clip.height)
+            .round()
+            .clamp(0.0, self.height as f32) as usize;
+        let last_column = picture.width as usize - 1;
+        let last_row = picture.height as usize - 1;
+        for y in y_start..y_end {
+            let mut dy = y as f32 + 0.5 - tile.y;
+            if tiles.repeat_y {
+                dy = dy.rem_euclid(tile.height);
+            } else if dy < 0.0 || dy >= tile.height {
+                continue;
+            }
+            let source_y = ((dy / tile.height * picture.height as f32) as usize).min(last_row);
+            for x in x_start..x_end {
+                let mut dx = x as f32 + 0.5 - tile.x;
+                if tiles.repeat_x {
+                    dx = dx.rem_euclid(tile.width);
+                } else if dx < 0.0 || dx >= tile.width {
+                    continue;
+                }
+                let source_x = ((dx / tile.width * picture.width as f32) as usize).min(last_column);
+                let offset = (source_y * picture.width as usize + source_x) * 4;
+                let alpha = picture.rgba[offset + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let color = Color {
+                    r: picture.rgba[offset],
+                    g: picture.rgba[offset + 1],
+                    b: picture.rgba[offset + 2],
+                };
+                let index = y * self.width + x;
+                self.pixels[index] = blend(self.pixels[index], color, alpha);
+            }
+        }
+    }
+
     pub fn to_argb(&self) -> Vec<u32> {
         let mut out = Vec::with_capacity(self.pixels.len());
         for pixel in &self.pixels {
@@ -188,6 +248,12 @@ pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font:
                 let mut rect = image.rect;
                 rect.y -= offset;
                 canvas.draw_picture(&rect, &image.picture);
+            }
+            DisplayCommand::Tiles(tiles) => {
+                let mut shifted = tiles.clone();
+                shifted.clip.y -= offset;
+                shifted.tile.y -= offset;
+                canvas.draw_tiles(&shifted);
             }
         }
     }
@@ -343,6 +409,29 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
             rect: layout_box.dimensions.border_box(),
         }));
     }
+    let Some(picture) = &layout_box.background_picture else {
+        return;
+    };
+    let origin = layout_box.dimensions.padding_box();
+    let (width, height) = style.background_size(
+        (origin.width, origin.height),
+        (picture.width as f32, picture.height as f32),
+    );
+    let (repeat_x, repeat_y) = style.background_repeat();
+    let x = origin.x + style.background_offset("background-position-x", origin.width - width);
+    let y = origin.y + style.background_offset("background-position-y", origin.height - height);
+    list.push(DisplayCommand::Tiles(Tiles {
+        clip: layout_box.dimensions.border_box(),
+        tile: Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        repeat_x,
+        repeat_y,
+        picture: picture.clone(),
+    }));
 }
 
 fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {

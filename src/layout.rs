@@ -56,6 +56,7 @@ pub struct LayoutBox<'a> {
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
     pub inline_boxes: Vec<InlineBoxFragment>,
+    pub background_picture: Option<Rc<Picture>>,
     pub(crate) forced_width: Option<f32>,
     pub(crate) forced_height: Option<f32>,
     pub(crate) static_position: Option<(f32, f32)>,
@@ -123,6 +124,7 @@ impl<'a> LayoutBox<'a> {
             fragments: Vec::new(),
             images: Vec::new(),
             inline_boxes: Vec::new(),
+            background_picture: None,
             forced_width: None,
             forced_height: None,
             static_position: None,
@@ -149,7 +151,11 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         collect_child(child, align, blockify, images, &mut flow);
     }
     flush_items(align, &mut flow);
-    LayoutBox::new(BoxKind::Block(style), flow.children)
+    let mut layout_box = LayoutBox::new(BoxKind::Block(style), flow.children);
+    layout_box.background_picture = style
+        .background_image()
+        .and_then(|url| images.get(url).cloned());
+    layout_box
 }
 
 fn inline_box_style(node: &StyledNode, id: usize) -> Option<Rc<InlineBoxStyle>> {

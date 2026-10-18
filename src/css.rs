@@ -49,6 +49,7 @@ pub enum Value {
     Vmax(f32),
     Calc(Linear),
     Color(Color),
+    Url(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -461,6 +462,12 @@ fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "background" {
         return expand_background(value);
     }
+    if name == "background-position" {
+        return expand_position(&split_values(value));
+    }
+    if name == "background-size" {
+        return expand_size(&split_values(value));
+    }
     if name == "font-size" {
         if let Some(size) = parse_font_size(value) {
             return vec![Declaration { name, value: size }];
@@ -507,15 +514,155 @@ fn split_values(text: &str) -> Vec<&str> {
 
 fn expand_background(text: &str) -> Vec<Declaration> {
     let mut declarations = Vec::new();
+    let mut position = Vec::new();
+    let mut size = Vec::new();
+    let mut in_size = false;
     for token in split_values(text) {
-        if let Some(Value::Color(color)) = parse_value(token) {
-            declarations.push(Declaration {
+        if token == "/" {
+            in_size = true;
+            continue;
+        }
+        let (token, starts_size) = match token.strip_prefix('/') {
+            Some(rest) => (rest, true),
+            None => (token, false),
+        };
+        in_size |= starts_size;
+        if token.is_empty() {
+            continue;
+        }
+        match parse_value(token) {
+            Some(Value::Color(color)) => declarations.push(Declaration {
                 name: "background-color".to_string(),
                 value: Value::Color(color),
-            });
+            }),
+            Some(Value::Url(url)) => declarations.push(Declaration {
+                name: "background-image".to_string(),
+                value: Value::Url(url),
+            }),
+            Some(Value::Keyword(keyword)) if is_repeat_keyword(&keyword) => {
+                declarations.push(Declaration {
+                    name: "background-repeat".to_string(),
+                    value: Value::Keyword(keyword),
+                })
+            }
+            Some(_) if in_size => size.push(token),
+            Some(_) => position.push(token),
+            None => {}
         }
     }
+    declarations.extend(expand_position(&position));
+    declarations.extend(expand_size(&size));
     declarations
+}
+
+fn is_repeat_keyword(keyword: &str) -> bool {
+    matches!(keyword, "repeat" | "repeat-x" | "repeat-y" | "no-repeat")
+}
+
+fn position_component(token: &str) -> Option<(Option<char>, Value)> {
+    let edge = |axis, percent| Some((axis, Value::Percent(percent)));
+    match token.to_ascii_lowercase().as_str() {
+        "left" => edge(Some('x'), 0.0),
+        "right" => edge(Some('x'), 100.0),
+        "top" => edge(Some('y'), 0.0),
+        "bottom" => edge(Some('y'), 100.0),
+        "center" => edge(None, 50.0),
+        _ => match parse_value(token)? {
+            value @ (Value::Length(_)
+            | Value::Em(_)
+            | Value::Percent(_)
+            | Value::Rem(_)
+            | Value::Vw(_)
+            | Value::Vh(_)
+            | Value::Vmin(_)
+            | Value::Vmax(_)) => Some((None, value)),
+            _ => None,
+        },
+    }
+}
+
+fn expand_position(tokens: &[&str]) -> Vec<Declaration> {
+    let center = Value::Percent(50.0);
+    let (x, y) = match tokens {
+        [one] => match position_component(one) {
+            Some((Some('y'), value)) => (center.clone(), value),
+            Some((_, value)) => (value, center.clone()),
+            None => return Vec::new(),
+        },
+        [first, second] => {
+            let (Some(first), Some(second)) =
+                (position_component(first), position_component(second))
+            else {
+                return Vec::new();
+            };
+            if first.0 == Some('y') || second.0 == Some('x') {
+                (second.1, first.1)
+            } else {
+                (first.1, second.1)
+            }
+        }
+        _ => return Vec::new(),
+    };
+    vec![
+        Declaration {
+            name: "background-position-x".to_string(),
+            value: x,
+        },
+        Declaration {
+            name: "background-position-y".to_string(),
+            value: y,
+        },
+    ]
+}
+
+fn size_component(token: &str) -> Option<Value> {
+    match parse_value(token)? {
+        value @ (Value::Length(_)
+        | Value::Em(_)
+        | Value::Percent(_)
+        | Value::Rem(_)
+        | Value::Vw(_)
+        | Value::Vh(_)
+        | Value::Vmin(_)
+        | Value::Vmax(_)) => Some(value),
+        Value::Keyword(keyword) if keyword == "auto" => Some(Value::Keyword(keyword)),
+        _ => None,
+    }
+}
+
+fn expand_size(tokens: &[&str]) -> Vec<Declaration> {
+    let auto = Value::Keyword("auto".to_string());
+    let (width, height) = match tokens {
+        [one] if matches!(one.to_ascii_lowercase().as_str(), "cover" | "contain") => {
+            return vec![Declaration {
+                name: "background-size".to_string(),
+                value: Value::Keyword(one.to_ascii_lowercase()),
+            }];
+        }
+        [one] => match size_component(one) {
+            Some(width) => (width, auto),
+            None => return Vec::new(),
+        },
+        [first, second] => match (size_component(first), size_component(second)) {
+            (Some(width), Some(height)) => (width, height),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    vec![
+        Declaration {
+            name: "background-size".to_string(),
+            value: Value::Keyword("explicit".to_string()),
+        },
+        Declaration {
+            name: "background-size-width".to_string(),
+            value: width,
+        },
+        Declaration {
+            name: "background-size-height".to_string(),
+            value: height,
+        },
+    ]
 }
 
 fn parse_font_size(text: &str) -> Option<Value> {
@@ -792,6 +939,14 @@ fn parse_value(text: &str) -> Option<Value> {
             return Some(Value::Length(linear.px));
         }
         return Some(Value::Calc(linear));
+    }
+    if let Some(rest) = text.strip_prefix("url(") {
+        let inner = rest.strip_suffix(')')?.trim();
+        let url = unquote(inner)?;
+        if url.is_empty() {
+            return None;
+        }
+        return Some(Value::Url(url));
     }
     if text.starts_with("light-dark(") {
         return parse_light_dark(text);

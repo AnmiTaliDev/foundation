@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use fontdue::Font;
 
-use crate::css::{self, Stylesheet};
+use crate::css::{self, Rule, Stylesheet, Value};
 use crate::dom::{Node, NodeType};
 use crate::layout::{self, ImageMap};
 use crate::loader;
@@ -17,6 +17,7 @@ use crate::{html, text};
 
 const MAX_IMPORT_DEPTH: usize = 8;
 const MAX_STYLESHEETS: usize = 64;
+const MAX_IMAGES: usize = 256;
 
 pub struct Page {
     document: Node,
@@ -60,7 +61,7 @@ impl Page {
         let mut sheets = Sheets {
             visited: HashSet::new(),
             loaded: 0,
-            css: String::new(),
+            rules: Vec::new(),
             warnings: Vec::new(),
         };
         for style_source in style::style_sources(&document) {
@@ -74,8 +75,22 @@ impl Page {
         let mut images = ImageMap::new();
         let mut sources = Vec::new();
         collect_image_sources(&document, &mut sources);
+        for rule in &sheets.rules {
+            for declaration in &rule.declarations {
+                if let Value::Url(url) = &declaration.value {
+                    sources.push(url.clone());
+                }
+            }
+        }
         for src in sources {
             if images.contains_key(&src) {
+                continue;
+            }
+            if images.len() >= MAX_IMAGES {
+                warnings.push(format!(
+                    "image {} skipped: more than {} images",
+                    src, MAX_IMAGES
+                ));
                 continue;
             }
             match load_picture(&base, &src) {
@@ -87,7 +102,7 @@ impl Page {
         }
 
         Page {
-            stylesheet: style::build_stylesheet(&sheets.css),
+            stylesheet: style::with_author_rules(sheets.rules),
             document,
             font: text::default_font(),
             images,
@@ -122,7 +137,7 @@ impl Page {
 struct Sheets {
     visited: HashSet<String>,
     loaded: usize,
-    css: String,
+    rules: Vec<Rule>,
     warnings: Vec<String>,
 }
 
@@ -198,8 +213,17 @@ fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets
             Err(message) => sheets.warnings.push(message),
         }
     }
-    sheets.css.push_str(text);
-    sheets.css.push('\n');
+    let mut parsed = css::parse(text);
+    for rule in &mut parsed.rules {
+        for declaration in &mut rule.declarations {
+            if let Value::Url(url) = &mut declaration.value {
+                if let Ok(location) = base.resolve(url) {
+                    *url = location.to_string();
+                }
+            }
+        }
+    }
+    sheets.rules.extend(parsed.rules);
 }
 
 fn add_linked_stylesheet(href: &str, base: &Location, sheets: &mut Sheets) {
@@ -243,6 +267,13 @@ fn collect_image_sources(node: &Node, sources: &mut Vec<String>) {
         if element.tag_name == "img" {
             if let Some(src) = element.attributes.get("src") {
                 sources.push(src.clone());
+            }
+        }
+        if let Some(inline) = element.attributes.get("style") {
+            for declaration in css::parse_declarations(inline) {
+                if let Value::Url(url) = declaration.value {
+                    sources.push(url);
+                }
             }
         }
     }
