@@ -7,6 +7,7 @@ use crate::css::{
 };
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
+use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
     "head, style, script, title, meta, link, base { display: none; } \
@@ -686,6 +687,41 @@ impl<'a> StyledNode<'a> {
 
     pub fn background(&self) -> Option<Color> {
         self.color("background-color")
+    }
+
+    pub fn opacity(&self) -> f32 {
+        match self.value("opacity") {
+            Some(Value::Number(number)) => number.clamp(0.0, 1.0),
+            Some(Value::Percent(percent)) => (percent / 100.0).clamp(0.0, 1.0),
+            Some(Value::Length(_)) => 0.0,
+            _ => 1.0,
+        }
+    }
+
+    pub fn transform_matrix(&self, x: f32, y: f32, width: f32, height: f32) -> Option<Matrix> {
+        let Some(Value::Transform(functions)) = self.value("transform") else {
+            return None;
+        };
+        let origin = |name: &str, size: f32| match self.value(name) {
+            Some(Value::Percent(percent)) => percent / 100.0 * size,
+            Some(_) => self.px(name, 0.0),
+            None => size / 2.0,
+        };
+        let origin = (
+            x + origin("transform-origin-x", width),
+            y + origin("transform-origin-y", height),
+        );
+        Some(transform::compose(
+            functions,
+            origin,
+            width,
+            height,
+            self.font_size(),
+        ))
+    }
+
+    pub fn has_effect(&self) -> bool {
+        self.opacity() < 1.0 || matches!(self.value("transform"), Some(Value::Transform(_)))
     }
 
     pub fn font_families(&self) -> &[String] {

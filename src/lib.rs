@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod calc;
+mod composite;
 pub mod css;
 pub mod dom;
 pub mod entities;
@@ -18,6 +19,7 @@ pub mod picture;
 pub mod style;
 pub mod supports;
 pub mod text;
+pub mod transform;
 
 pub use page::{Frame, Page};
 

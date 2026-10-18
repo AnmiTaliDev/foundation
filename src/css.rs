@@ -3,6 +3,7 @@
 use crate::calc::{self, Linear};
 use crate::media::MediaList;
 use crate::supports;
+use crate::transform::{self, Function};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
@@ -66,6 +67,7 @@ pub enum Value {
     Color(Color),
     Url(String),
     Families(Vec<String>),
+    Transform(Vec<Function>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -681,8 +683,22 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             None => Vec::new(),
         };
     }
+    if name == "transform" {
+        return match transform::parse(value) {
+            Some(functions) => vec![Declaration {
+                name,
+                value: Value::Transform(functions),
+            }],
+            None => parse_value(value)
+                .map(|value| vec![Declaration { name, value }])
+                .unwrap_or_default(),
+        };
+    }
     if name == "background-position" {
-        return expand_position(&split_values(value));
+        return expand_position(&split_values(value), "background-position");
+    }
+    if name == "transform-origin" {
+        return expand_position(&split_values(value), "transform-origin");
     }
     if name == "background-size" {
         return expand_size(&split_values(value));
@@ -769,7 +785,7 @@ fn expand_background(text: &str) -> Vec<Declaration> {
             None => {}
         }
     }
-    declarations.extend(expand_position(&position));
+    declarations.extend(expand_position(&position, "background-position"));
     declarations.extend(expand_size(&size));
     declarations
 }
@@ -800,7 +816,7 @@ fn position_component(token: &str) -> Option<(Option<char>, Value)> {
     }
 }
 
-fn expand_position(tokens: &[&str]) -> Vec<Declaration> {
+fn expand_position(tokens: &[&str], prefix: &str) -> Vec<Declaration> {
     let center = Value::Percent(50.0);
     let (x, y) = match tokens {
         [one] => match position_component(one) {
@@ -824,11 +840,11 @@ fn expand_position(tokens: &[&str]) -> Vec<Declaration> {
     };
     vec![
         Declaration {
-            name: "background-position-x".to_string(),
+            name: format!("{}-x", prefix),
             value: x,
         },
         Declaration {
-            name: "background-position-y".to_string(),
+            name: format!("{}-y", prefix),
             value: y,
         },
     ]
