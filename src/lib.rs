@@ -16,6 +16,7 @@ pub mod page;
 pub mod paint;
 pub mod picture;
 pub mod style;
+pub mod supports;
 pub mod text;
 
 pub use page::{Frame, Page};

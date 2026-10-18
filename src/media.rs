@@ -101,7 +101,7 @@ impl Condition {
     }
 }
 
-fn split_terms(text: &str) -> Vec<&str> {
+pub(crate) fn split_terms(text: &str) -> Vec<&str> {
     let mut terms = Vec::new();
     let mut depth = 0usize;
     let mut start: Option<usize> = None;

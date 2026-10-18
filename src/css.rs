@@ -2,6 +2,7 @@
 
 use crate::calc::{self, Linear};
 use crate::media::MediaList;
+use crate::supports;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
@@ -262,16 +263,16 @@ fn scan_top_level(source: &str) -> Vec<TopLevel<'_>> {
     items
 }
 
-const MAX_MEDIA_DEPTH: usize = 8;
+const MAX_NESTING: usize = 8;
 
 pub fn parse(source: &str) -> Stylesheet {
     let source = strip_comments(source);
     let mut rules = Vec::new();
-    collect_rules(&source, &[], &mut rules);
+    collect_rules(&source, &[], 0, &mut rules);
     Stylesheet { rules }
 }
 
-fn collect_rules(source: &str, media: &[MediaList], rules: &mut Vec<Rule>) {
+fn collect_rules(source: &str, media: &[MediaList], depth: usize, rules: &mut Vec<Rule>) {
     for item in scan_top_level(source) {
         let TopLevel::Block { prelude, body } = item else {
             continue;
@@ -283,24 +284,29 @@ fn collect_rules(source: &str, media: &[MediaList], rules: &mut Vec<Rule>) {
             }
             continue;
         }
-        let Some(condition) = media_condition(prelude) else {
-            continue;
-        };
-        if media.len() >= MAX_MEDIA_DEPTH {
+        if depth >= MAX_NESTING {
             continue;
         }
-        let mut nested = media.to_vec();
-        nested.push(MediaList::parse(condition));
-        collect_rules(body, &nested, rules);
+        if let Some(condition) = at_rule_condition(prelude, "@media") {
+            let mut nested = media.to_vec();
+            nested.push(MediaList::parse(condition));
+            collect_rules(body, &nested, depth + 1, rules);
+        } else if let Some(condition) = at_rule_condition(prelude, "@supports") {
+            if supports::evaluate(condition) {
+                collect_rules(body, media, depth + 1, rules);
+            }
+        } else if at_rule_condition(prelude, "@layer").is_some() {
+            collect_rules(body, media, depth + 1, rules);
+        }
     }
 }
 
-fn media_condition(prelude: &str) -> Option<&str> {
-    let head = prelude.get(..6)?;
-    if !head.eq_ignore_ascii_case("@media") {
+fn at_rule_condition<'a>(prelude: &'a str, name: &str) -> Option<&'a str> {
+    let head = prelude.get(..name.len())?;
+    if !head.eq_ignore_ascii_case(name) {
         return None;
     }
-    let rest = &prelude[6..];
+    let rest = &prelude[name.len()..];
     if rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '(') {
         Some(rest.trim())
     } else {
@@ -467,7 +473,7 @@ fn parse_compound(text: &str) -> Option<Selector> {
     Some(selector)
 }
 
-fn parse_declaration(item: &str) -> Vec<Declaration> {
+pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     let Some((name, value)) = item.split_once(':') else {
         return Vec::new();
     };
