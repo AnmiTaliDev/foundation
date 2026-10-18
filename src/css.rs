@@ -869,6 +869,12 @@ fn expand_background(text: &str) -> Vec<Declaration> {
                 name: "background-image".to_string(),
                 value,
             }),
+            Some(Value::Keyword(keyword)) if keyword == "currentcolor" => {
+                declarations.push(Declaration {
+                    name: "background-color".to_string(),
+                    value: Value::Keyword(keyword),
+                })
+            }
             Some(Value::Keyword(keyword)) if is_repeat_keyword(&keyword) => {
                 declarations.push(Declaration {
                     name: "background-repeat".to_string(),
@@ -1266,6 +1272,12 @@ fn expand_border(text: &str) -> Vec<Declaration> {
             }
             Some(Value::Keyword(keyword)) if keyword == "none" => {
                 push_border_widths(&mut declarations, Value::Length(0.0));
+            }
+            Some(Value::Keyword(keyword)) if keyword == "currentcolor" => {
+                declarations.push(Declaration {
+                    name: "border-color".to_string(),
+                    value: Value::Keyword(keyword),
+                })
             }
             Some(Value::Keyword(_)) => {}
             _ => return Vec::new(),

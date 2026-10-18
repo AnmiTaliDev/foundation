@@ -35,6 +35,13 @@ const INHERITED_PROPERTIES: [&str; 7] = [
     "font-style",
 ];
 
+const BORDER_WIDTHS: [&str; 4] = [
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+];
+
 pub type PropertyMap = HashMap<String, Value>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -283,6 +290,7 @@ fn style_node<'a>(
             resolve_viewport_units(&mut values, context.viewport, root_font_size);
             resolve_font_size(&mut values, parent);
             resolve_line_height(&mut values);
+            resolve_current_color(&mut values, parent);
             let children_root_font_size = if ancestors.is_empty() {
                 font_size_of(&values)
             } else {
@@ -357,6 +365,32 @@ fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
         Some(px) => values.insert("font-size".to_string(), Value::Length(px)),
         None => values.remove("font-size"),
     };
+}
+
+fn is_current_color(value: Option<&Value>) -> bool {
+    matches!(value, Some(Value::Keyword(keyword)) if keyword == "currentcolor")
+}
+
+fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
+    if is_current_color(values.get("color")) {
+        match parent.get("color") {
+            Some(color) => values.insert("color".to_string(), color.clone()),
+            None => values.remove("color"),
+        };
+    }
+    let current = values.get("color").cloned().unwrap_or(Value::Color(BLACK));
+    for name in ["background-color", "border-color"] {
+        if is_current_color(values.get(name)) {
+            values.insert(name.to_string(), current.clone());
+        }
+    }
+    let has_border = BORDER_WIDTHS.iter().any(|name| {
+        matches!(values.get(*name), Some(Value::Length(px)) if *px > 0.0)
+            || matches!(values.get(*name), Some(Value::Em(em)) if *em > 0.0)
+    });
+    if has_border && !values.contains_key("border-color") {
+        values.insert("border-color".to_string(), current);
+    }
 }
 
 fn resolve_line_height(values: &mut PropertyMap) {
