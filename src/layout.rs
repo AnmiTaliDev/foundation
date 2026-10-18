@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use fontdue::Font;
+use crate::text::Fonts;
 
 use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
@@ -91,14 +91,14 @@ impl Dimensions {
 pub fn layout_tree<'a>(
     root: &'a StyledNode<'a>,
     viewport: Viewport,
-    font: &Font,
+    fonts: &Fonts,
     images: &ImageMap,
 ) -> LayoutBox<'a> {
     let mut layout_root = build_block_box(root, images);
     let mut initial = Dimensions::default();
     initial.content.width = viewport.width;
     let mut floats = FloatContext::default();
-    layout_root.layout(&initial, font, images, &mut floats);
+    layout_root.layout(&initial, fonts, images, &mut floats);
     let bottom = floats.max_bottom();
     let content_bottom = layout_root.dimensions.content.y + layout_root.dimensions.content.height;
     if bottom > content_bottom {
@@ -110,8 +110,8 @@ pub fn layout_tree<'a>(
         width: viewport.width,
         height: viewport.height,
     };
-    layout_root.layout_out_of_flow(window, font, images);
-    layout_root.layout_fixed(window, font, images);
+    layout_root.layout_out_of_flow(window, fonts, images);
+    layout_root.layout_fixed(window, fonts, images);
     layout_root
 }
 
@@ -221,6 +221,9 @@ fn collect_child<'a>(
                 color: node.text_color(),
                 font_size: node.font_size(),
                 line_height: node.line_height(),
+                families: node.font_families(),
+                bold: node.font_bold(),
+                italic: node.font_italic(),
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -399,7 +402,7 @@ impl<'a> LayoutBox<'a> {
     pub(crate) fn layout(
         &mut self,
         containing: &Dimensions,
-        font: &Font,
+        fonts: &Fonts,
         images: &ImageMap,
         floats: &mut FloatContext,
     ) {
@@ -410,17 +413,17 @@ impl<'a> LayoutBox<'a> {
                 self.calculate_width(style, containing, replaced.as_ref());
                 self.calculate_position(style, containing);
                 if style.display() == Display::Flex {
-                    self.layout_flex_children(style, font, images);
+                    self.layout_flex_children(style, fonts, images);
                 } else if self.is_formatting_root(style) {
                     let mut own = FloatContext::default();
-                    self.layout_children(font, images, &mut own);
+                    self.layout_children(fonts, images, &mut own);
                     let content_bottom = self.dimensions.content.y + self.dimensions.content.height;
                     let float_bottom = own.max_bottom();
                     if float_bottom > content_bottom {
                         self.dimensions.content.height += float_bottom - content_bottom;
                     }
                 } else {
-                    self.layout_children(font, images, floats);
+                    self.layout_children(fonts, images, floats);
                 }
                 self.collapse_bottom_margin(style);
                 self.calculate_height(style, replaced.as_ref());
@@ -429,7 +432,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 if style.is_positioned() {
                     let area = self.dimensions.padding_box();
-                    self.layout_out_of_flow(area, font, images);
+                    self.layout_out_of_flow(area, fonts, images);
                 }
             }
             BoxKind::Anonymous(content) => {
@@ -437,7 +440,8 @@ impl<'a> LayoutBox<'a> {
                 area.x = containing.content.x;
                 area.y = containing.content.y + containing.content.height;
                 area.width = containing.content.width;
-                let lines = inline::layout_lines(content, area.width, area.x, area.y, font, floats);
+                let lines =
+                    inline::layout_lines(content, area.width, area.x, area.y, fonts, floats);
                 area.height = lines.height;
                 self.fragments = lines.fragments;
                 self.images = lines.images;
@@ -550,34 +554,34 @@ impl<'a> LayoutBox<'a> {
         self.translate(dx, dy);
     }
 
-    fn layout_out_of_flow(&mut self, area: Rect, font: &Font, images: &ImageMap) {
+    fn layout_out_of_flow(&mut self, area: Rect, fonts: &Fonts, images: &ImageMap) {
         for child in &mut self.children {
             let position = match &child.kind {
                 BoxKind::Block(style) => style.position(),
                 BoxKind::Anonymous(_) => continue,
             };
             match position {
-                Position::Absolute => child.layout_absolute(area, font, images),
-                Position::Static => child.layout_out_of_flow(area, font, images),
+                Position::Absolute => child.layout_absolute(area, fonts, images),
+                Position::Static => child.layout_out_of_flow(area, fonts, images),
                 Position::Relative | Position::Fixed => {}
             }
         }
     }
 
-    fn layout_fixed(&mut self, window: Rect, font: &Font, images: &ImageMap) {
+    fn layout_fixed(&mut self, window: Rect, fonts: &Fonts, images: &ImageMap) {
         for child in &mut self.children {
             let position = match &child.kind {
                 BoxKind::Block(style) => style.position(),
                 BoxKind::Anonymous(_) => continue,
             };
             if position == Position::Fixed {
-                child.layout_absolute(window, font, images);
+                child.layout_absolute(window, fonts, images);
             }
-            child.layout_fixed(window, font, images);
+            child.layout_fixed(window, fonts, images);
         }
     }
 
-    fn layout_absolute(&mut self, area: Rect, font: &Font, images: &ImageMap) {
+    fn layout_absolute(&mut self, area: Rect, fonts: &Fonts, images: &ImageMap) {
         let Some(static_position) = self.static_position.take() else {
             return;
         };
@@ -631,7 +635,7 @@ impl<'a> LayoutBox<'a> {
                     - margin_right
                     - horizontal_extras)
                     .max(0.0);
-                self.preferred_width(font, images, area.width)
+                self.preferred_width(fonts, images, area.width)
                     .min(available)
             }
         };
@@ -645,7 +649,7 @@ impl<'a> LayoutBox<'a> {
 
         let mut origin = Dimensions::default();
         origin.content.width = area.width;
-        self.layout(&origin, font, images, &mut FloatContext::default());
+        self.layout(&origin, fonts, images, &mut FloatContext::default());
 
         let mut height = match &replaced {
             Some(_) => None,
@@ -710,7 +714,7 @@ impl<'a> LayoutBox<'a> {
     fn flex_preferred_width(
         &self,
         style: &StyledNode,
-        font: &Font,
+        fonts: &Fonts,
         images: &ImageMap,
         base: f32,
     ) -> f32 {
@@ -735,7 +739,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 BoxKind::Anonymous(_) => 0.0,
             };
-            let size = child.preferred_width(font, images, base) + extras;
+            let size = child.preferred_width(fonts, images, base) + extras;
             total = if row { total + size } else { total.max(size) };
             count += 1;
         }
@@ -763,9 +767,9 @@ impl<'a> LayoutBox<'a> {
         d.margin.right = style.px("margin-right", container);
     }
 
-    pub(crate) fn preferred_width(&self, font: &Font, images: &ImageMap, base: f32) -> f32 {
+    pub(crate) fn preferred_width(&self, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         match &self.kind {
-            BoxKind::Anonymous(content) => inline::max_content_width(content, font),
+            BoxKind::Anonymous(content) => inline::max_content_width(content, fonts),
             BoxKind::Block(style) => {
                 if let Some(replaced) = block_replaced(style, images, base) {
                     return replaced.width;
@@ -774,7 +778,7 @@ impl<'a> LayoutBox<'a> {
                     return width;
                 }
                 if style.display() == Display::Flex {
-                    return self.flex_preferred_width(style, font, images, base);
+                    return self.flex_preferred_width(style, fonts, images, base);
                 }
                 let mut widest: f32 = 0.0;
                 for child in &self.children {
@@ -787,7 +791,7 @@ impl<'a> LayoutBox<'a> {
                         BoxKind::Block(child_style) => horizontal_extras(child_style, base),
                         BoxKind::Anonymous(_) => 0.0,
                     };
-                    widest = widest.max(child.preferred_width(font, images, base) + extras);
+                    widest = widest.max(child.preferred_width(fonts, images, base) + extras);
                 }
                 widest
             }
@@ -836,7 +840,7 @@ impl<'a> LayoutBox<'a> {
         &mut self,
         side: Side,
         parent: &Dimensions,
-        font: &Font,
+        fonts: &Fonts,
         images: &ImageMap,
         floats: &mut FloatContext,
     ) {
@@ -854,7 +858,7 @@ impl<'a> LayoutBox<'a> {
         let mut width = match specified {
             Some(width) => width,
             None => self
-                .preferred_width(font, images, container)
+                .preferred_width(fonts, images, container)
                 .min((container - extras).max(0.0)),
         };
         if let Some(max) = style.length_or_auto("max-width", None, Some(container)) {
@@ -867,7 +871,7 @@ impl<'a> LayoutBox<'a> {
 
         let mut origin = Dimensions::default();
         origin.content.width = container;
-        self.layout(&origin, font, images, &mut FloatContext::default());
+        self.layout(&origin, fonts, images, &mut FloatContext::default());
 
         let margin_box = self.dimensions.margin_box();
         let flow_y = parent.content.y + parent.content.height;
@@ -895,7 +899,7 @@ impl<'a> LayoutBox<'a> {
         );
     }
 
-    fn layout_children(&mut self, font: &Font, images: &ImageMap, floats: &mut FloatContext) {
+    fn layout_children(&mut self, fonts: &Fonts, images: &ImageMap, floats: &mut FloatContext) {
         let base = self.dimensions.content.width;
         let is_root = match &self.kind {
             BoxKind::Block(style) => self.is_formatting_root(style),
@@ -915,7 +919,7 @@ impl<'a> LayoutBox<'a> {
                     continue;
                 }
                 if let Some(side) = style.float() {
-                    child.layout_float(side, &self.dimensions, font, images, floats);
+                    child.layout_float(side, &self.dimensions, fonts, images, floats);
                     continue;
                 }
             }
@@ -945,7 +949,7 @@ impl<'a> LayoutBox<'a> {
 
             let mut containing = self.dimensions;
             containing.content.height += shift - overlap;
-            child.layout(&containing, font, images, floats);
+            child.layout(&containing, fonts, images, floats);
             self.dimensions.content.height +=
                 child.dimensions.margin_box().height - overlap + shift;
             child.apply_relative_offset(base);

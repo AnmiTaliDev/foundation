@@ -7,6 +7,7 @@ use crate::location::Location;
 
 pub const MAX_DOCUMENT_SIZE: u64 = 10 * 1024 * 1024;
 pub const MAX_IMAGE_SIZE: u64 = 20 * 1024 * 1024;
+pub const MAX_FONT_SIZE: u64 = 10 * 1024 * 1024;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = "Foundation/0.1";

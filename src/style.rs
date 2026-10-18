@@ -13,13 +13,24 @@ pub const USER_AGENT_STYLESHEET: &str =
     span, a, b, i, em, strong, code, small, u, label, img, mark, abbr, cite, kbd, samp, var, del, ins, s, q, sub, sup, time { display: inline; } \
     body { margin: 8px; } \
     h1 { font-size: 32px; } h2 { font-size: 24px; } h3 { font-size: 19px; } \
-    p, h1, h2, h3 { margin-bottom: 12px; }";
+    p, h1, h2, h3 { margin-bottom: 12px; } \
+    b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
+    i, em, cite, var, address { font-style: italic; } \
+    code, kbd, samp, pre, tt { font-family: monospace; }";
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 4] = ["color", "font-size", "text-align", "line-height"];
+const INHERITED_PROPERTIES: [&str; 7] = [
+    "color",
+    "font-size",
+    "text-align",
+    "line-height",
+    "font-family",
+    "font-weight",
+    "font-style",
+];
 
 pub type PropertyMap = HashMap<String, Value>;
 
@@ -675,6 +686,25 @@ impl<'a> StyledNode<'a> {
 
     pub fn background(&self) -> Option<Color> {
         self.color("background-color")
+    }
+
+    pub fn font_families(&self) -> &[String] {
+        match self.value("font-family") {
+            Some(Value::Families(families)) => families,
+            _ => &[],
+        }
+    }
+
+    pub fn font_bold(&self) -> bool {
+        match self.value("font-weight") {
+            Some(Value::Keyword(keyword)) => keyword == "bold" || keyword == "bolder",
+            Some(Value::Number(weight)) => *weight >= 600.0,
+            _ => false,
+        }
+    }
+
+    pub fn font_italic(&self) -> bool {
+        matches!(self.keyword("font-style"), Some("italic") | Some("oblique"))
     }
 
     pub fn background_image(&self) -> Option<&str> {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use fontdue::Font;
+use crate::text::Fonts;
 
 use crate::float::FloatContext;
 use crate::layout::{block_replaced, BoxKind, Dimensions, EdgeSizes, ImageMap, LayoutBox};
@@ -134,7 +134,7 @@ fn measure(
     forced_width: Option<f32>,
     forced_height: Option<f32>,
     base: f32,
-    font: &Font,
+    fonts: &Fonts,
     images: &ImageMap,
 ) -> Dimensions {
     child.forced_width = forced_width;
@@ -142,7 +142,7 @@ fn measure(
     child.reset();
     let mut origin = Dimensions::default();
     origin.content.width = base;
-    child.layout(&origin, font, images, &mut FloatContext::default());
+    child.layout(&origin, fonts, images, &mut FloatContext::default());
     child.dimensions
 }
 
@@ -157,7 +157,7 @@ fn read_item(
     index: usize,
     child: &mut LayoutBox,
     container: &Container,
-    font: &Font,
+    fonts: &Fonts,
     images: &ImageMap,
 ) -> Item {
     let axes = &container.axes;
@@ -256,7 +256,7 @@ fn read_item(
         let pre = match specified_cross {
             Some(size) => size,
             None if item.align == Align::Stretch => available,
-            None => child.preferred_width(font, images, width).min(available),
+            None => child.preferred_width(fonts, images, width).min(available),
         };
         item.cross_pre = pre.min(item.cross_max).max(item.cross_min);
     }
@@ -266,9 +266,9 @@ fn read_item(
         (FlexBasis::Auto, Some(size)) => size,
         _ => {
             if axes.row {
-                child.preferred_width(font, images, width)
+                child.preferred_width(fonts, images, width)
             } else {
-                measure(child, Some(item.cross_pre), None, width, font, images)
+                measure(child, Some(item.cross_pre), None, width, fonts, images)
                     .content
                     .height
             }
@@ -371,7 +371,7 @@ impl<'a> LayoutBox<'a> {
     pub(crate) fn layout_flex_children(
         &mut self,
         style: &StyledNode,
-        font: &Font,
+        fonts: &Fonts,
         images: &ImageMap,
     ) {
         let direction = style.flex_direction();
@@ -419,7 +419,7 @@ impl<'a> LayoutBox<'a> {
                 }
             }
             child.formatting_root = true;
-            items.push(read_item(index, child, &container, font, images));
+            items.push(read_item(index, child, &container, fonts, images));
         }
         items.sort_by_key(|item| item.order);
         if items.is_empty() {
@@ -492,7 +492,7 @@ impl<'a> LayoutBox<'a> {
                     Some(item.target),
                     None,
                     width,
-                    font,
+                    fonts,
                     images,
                 );
                 item.measured_cross = dims.content.height;
@@ -622,7 +622,7 @@ impl<'a> LayoutBox<'a> {
             child.forced_width = forced_width;
             child.forced_height = forced_height;
             child.reset();
-            child.layout(&initial, font, images, &mut FloatContext::default());
+            child.layout(&initial, fonts, images, &mut FloatContext::default());
             child.dimensions.margin = EdgeSizes {
                 top: item.margin[TOP],
                 right: item.margin[RIGHT],

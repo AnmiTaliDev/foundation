@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use fontdue::Font;
+use crate::text::Fonts;
 
-use crate::css::{self, Rule, Stylesheet, Value};
+use crate::css::{self, FontFace, Rule, Stylesheet, Value};
 use crate::dom::{Node, NodeType};
 use crate::layout::{self, ImageMap};
 use crate::loader;
@@ -18,11 +18,12 @@ use crate::{html, text};
 const MAX_IMPORT_DEPTH: usize = 8;
 const MAX_STYLESHEETS: usize = 64;
 const MAX_IMAGES: usize = 256;
+const MAX_FONTS: usize = 16;
 
 pub struct Page {
     document: Node,
     stylesheet: Stylesheet,
-    font: Font,
+    fonts: Fonts,
     images: ImageMap,
     pub warnings: Vec<String>,
 }
@@ -40,7 +41,7 @@ impl Page {
         Page {
             document,
             stylesheet,
-            font: text::default_font(),
+            fonts: text::default_font(),
             images: ImageMap::new(),
             warnings: Vec::new(),
         }
@@ -63,6 +64,7 @@ impl Page {
             loaded: 0,
             rules: Vec::new(),
             layers: Vec::new(),
+            font_faces: Vec::new(),
             warnings: Vec::new(),
         };
         for style_source in style::style_sources(&document) {
@@ -102,10 +104,23 @@ impl Page {
             }
         }
 
+        let mut fonts = text::default_font();
+        for face in sheets.font_faces.iter().take(MAX_FONTS) {
+            if let Err(message) = load_font(&mut fonts, &base, face) {
+                warnings.push(message);
+            }
+        }
+        if sheets.font_faces.len() > MAX_FONTS {
+            warnings.push(format!(
+                "more than {} font faces, the rest are skipped",
+                MAX_FONTS
+            ));
+        }
+
         Page {
             stylesheet: style::with_author_rules(sheets.rules, sheets.layers),
             document,
-            font: text::default_font(),
+            fonts,
             images,
             warnings,
         }
@@ -116,12 +131,12 @@ impl Page {
         match style::style_tree(&self.document, &self.stylesheet, viewport) {
             Some(styled_root) => {
                 let layout_root =
-                    layout::layout_tree(&styled_root, viewport, &self.font, &self.images);
+                    layout::layout_tree(&styled_root, viewport, &self.fonts, &self.images);
                 let content_height = layout_root.dimensions.margin_box().height;
                 let max_scroll = (content_height - height as f32).max(0.0);
                 let scroll_y = scroll_y.clamp(0.0, max_scroll);
                 Frame {
-                    canvas: paint::paint(&layout_root, width, height, scroll_y, &self.font),
+                    canvas: paint::paint(&layout_root, width, height, scroll_y, &self.fonts),
                     content_height,
                     scroll_y,
                 }
@@ -140,6 +155,7 @@ struct Sheets {
     loaded: usize,
     rules: Vec<Rule>,
     layers: Vec<String>,
+    font_faces: Vec<FontFace>,
     warnings: Vec<String>,
 }
 
@@ -230,6 +246,14 @@ fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets
             sheets.layers.push(layer);
         }
     }
+    for mut face in parsed.font_faces {
+        for source in &mut face.sources {
+            if let Ok(location) = base.resolve(source) {
+                *source = location.to_string();
+            }
+        }
+        sheets.font_faces.push(face);
+    }
     sheets.rules.extend(parsed.rules);
 }
 
@@ -259,6 +283,31 @@ fn add_linked_stylesheet(href: &str, base: &Location, sheets: &mut Sheets) {
         }
         Err(message) => sheets.warnings.push(message),
     }
+}
+
+fn load_font(fonts: &mut text::Fonts, base: &Location, face: &FontFace) -> Result<(), String> {
+    let mut last_error = format!("font {}: no usable source", face.family);
+    for source in &face.sources {
+        let location = match base.resolve(source) {
+            Ok(location) => location,
+            Err(error) => {
+                last_error = format!("font {}: {}", source, error);
+                continue;
+            }
+        };
+        let bytes = match loader::fetch(&location, loader::MAX_FONT_SIZE) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                last_error = message;
+                continue;
+            }
+        };
+        match fonts.add(&face.family, face.bold, face.italic, &bytes) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = format!("cannot load font {}: {}", location, error),
+        }
+    }
+    Err(last_error)
 }
 
 fn load_picture(base: &Location, src: &str) -> Result<picture::Picture, String> {

@@ -8,6 +8,15 @@ use crate::supports;
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
     pub layers: Vec<String>,
+    pub font_faces: Vec<FontFace>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontFace {
+    pub family: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +65,7 @@ pub enum Value {
     Calc(Linear),
     Color(Color),
     Url(String),
+    Families(Vec<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -273,6 +283,7 @@ pub fn parse(source: &str) -> Stylesheet {
     let mut sheet = Stylesheet {
         rules: Vec::new(),
         layers: Vec::new(),
+        font_faces: Vec::new(),
     };
     let scope = Scope {
         media: Vec::new(),
@@ -333,6 +344,10 @@ fn collect_rules(source: &str, scope: &Scope, sheet: &mut Stylesheet) {
             }
             continue;
         }
+        if at_rule_condition(prelude, "@font-face") == Some("") {
+            sheet.font_faces.extend(parse_font_face(body));
+            continue;
+        }
         if scope.depth >= MAX_NESTING {
             continue;
         }
@@ -356,6 +371,71 @@ fn collect_rules(source: &str, scope: &Scope, sheet: &mut Stylesheet) {
             collect_rules(body, &nested, sheet);
         }
     }
+}
+
+fn parse_font_face(body: &str) -> Option<FontFace> {
+    let mut family = None;
+    let mut bold = false;
+    let mut italic = false;
+    let mut sources = Vec::new();
+    for item in body.split(';') {
+        let Some((name, value)) = item.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match name.trim().to_ascii_lowercase().as_str() {
+            "font-family" => family = parse_families(value)?.into_iter().next(),
+            "font-weight" => {
+                bold = match parse_value(value) {
+                    Some(Value::Keyword(keyword)) => keyword == "bold" || keyword == "bolder",
+                    Some(Value::Number(weight)) => weight >= 600.0,
+                    _ => false,
+                }
+            }
+            "font-style" => {
+                italic = matches!(value.to_ascii_lowercase().as_str(), "italic" | "oblique")
+            }
+            "src" => sources = parse_font_sources(value),
+            _ => {}
+        }
+    }
+    if sources.is_empty() {
+        return None;
+    }
+    Some(FontFace {
+        family: family?,
+        bold,
+        italic,
+        sources,
+    })
+}
+
+fn parse_font_sources(text: &str) -> Vec<String> {
+    let mut sources = Vec::new();
+    for part in text.split(',') {
+        let tokens = split_values(part);
+        let supported = tokens.iter().all(|token| {
+            let lower = token.to_ascii_lowercase();
+            match lower.strip_prefix("format(") {
+                Some(inner) => {
+                    let format = inner
+                        .trim_end_matches(')')
+                        .trim_matches(|c| c == '"' || c == '\'');
+                    matches!(format, "truetype" | "opentype" | "ttf" | "otf")
+                }
+                None => true,
+            }
+        });
+        if !supported {
+            continue;
+        }
+        for token in tokens {
+            if let Some(Value::Url(url)) = parse_value(token) {
+                sources.push(url);
+            }
+        }
+    }
+    sources
 }
 
 fn at_rule_condition<'a>(prelude: &'a str, name: &str) -> Option<&'a str> {
@@ -592,6 +672,15 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "background" {
         return expand_background(value);
     }
+    if name == "font-family" {
+        return match parse_families(value) {
+            Some(families) => vec![Declaration {
+                name,
+                value: Value::Families(families),
+            }],
+            None => Vec::new(),
+        };
+    }
     if name == "background-position" {
         return expand_position(&split_values(value));
     }
@@ -816,6 +905,36 @@ fn parse_font_size(text: &str) -> Option<Value> {
     }
 }
 
+pub(crate) fn parse_families(text: &str) -> Option<Vec<String>> {
+    let mut families = Vec::new();
+    let mut start = 0;
+    let mut quote: Option<char> = None;
+    for (index, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ',')))
+    {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            ',' => {
+                let name = text[start..index].trim();
+                if name.is_empty() {
+                    return None;
+                }
+                families.push(unquote(name)?);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    Some(families)
+}
+
 fn expand_font(text: &str) -> Vec<Declaration> {
     let tokens = split_values(text);
     for (index, token) in tokens.iter().enumerate() {
@@ -826,8 +945,10 @@ fn expand_font(text: &str) -> Vec<Declaration> {
         let Some(size) = parse_font_size(size_text) else {
             continue;
         };
+        let mut family_start = index + 1;
         if line_height_text.is_none() && tokens.get(index + 1) == Some(&"/") {
             line_height_text = tokens.get(index + 2).copied();
+            family_start = index + 3;
         }
         let line_height = match line_height_text {
             Some(line_height) => match parse_value(line_height) {
@@ -836,7 +957,7 @@ fn expand_font(text: &str) -> Vec<Declaration> {
             },
             None => Value::Keyword("normal".to_string()),
         };
-        return vec![
+        let mut declarations = vec![
             Declaration {
                 name: "font-size".to_string(),
                 value: size,
@@ -846,6 +967,37 @@ fn expand_font(text: &str) -> Vec<Declaration> {
                 value: line_height,
             },
         ];
+        for before in &tokens[..index] {
+            match before.to_ascii_lowercase().as_str() {
+                "italic" | "oblique" => declarations.push(Declaration {
+                    name: "font-style".to_string(),
+                    value: Value::Keyword("italic".to_string()),
+                }),
+                "bold" | "bolder" => declarations.push(Declaration {
+                    name: "font-weight".to_string(),
+                    value: Value::Keyword("bold".to_string()),
+                }),
+                number => {
+                    if let Some(Value::Number(weight)) = parse_value(number) {
+                        declarations.push(Declaration {
+                            name: "font-weight".to_string(),
+                            value: Value::Number(weight),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(families) = tokens
+            .get(family_start..)
+            .filter(|rest| !rest.is_empty())
+            .and_then(|rest| parse_families(&rest.join(" ")))
+        {
+            declarations.push(Declaration {
+                name: "font-family".to_string(),
+                value: Value::Families(families),
+            });
+        }
+        return declarations;
     }
     Vec::new()
 }

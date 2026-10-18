@@ -2,14 +2,12 @@
 
 use std::rc::Rc;
 
-use fontdue::Font;
-
 use crate::css::Color;
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
 use crate::style::TextAlign;
-use crate::text;
+use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Run<'a> {
@@ -17,6 +15,9 @@ pub struct Run<'a> {
     pub color: Color,
     pub font_size: f32,
     pub line_height: Option<f32>,
+    pub families: &'a [String],
+    pub bold: bool,
+    pub italic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +70,7 @@ pub struct Fragment {
     pub text: String,
     pub color: Color,
     pub font_size: f32,
+    pub face: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +97,11 @@ pub struct Lines {
 
 #[derive(Clone, Copy)]
 enum Piece<'a> {
-    Text { text: &'a str, run: &'a Run<'a> },
+    Text {
+        text: &'a str,
+        run: &'a Run<'a>,
+        face: usize,
+    },
     Image(&'a ImageRun),
 }
 
@@ -128,6 +134,13 @@ impl Word<'_> {
         }
     }
 
+    fn face(&self) -> usize {
+        match &self.piece {
+            Piece::Text { face, .. } => *face,
+            Piece::Image(_) => 0,
+        }
+    }
+
     fn lead(&self) -> f32 {
         self.opens.iter().map(|style| style.left_extra()).sum()
     }
@@ -136,16 +149,16 @@ impl Word<'_> {
         self.closes.iter().map(|style| style.right_extra()).sum()
     }
 
-    fn width(&self, font: &Font) -> f32 {
+    fn width(&self, fonts: &Fonts) -> f32 {
         let content = match &self.piece {
-            Piece::Text { text, run } => text::text_width(font, text, run.font_size),
+            Piece::Text { text, run, face } => fonts.width(*face, text, run.font_size),
             Piece::Image(image) => image.width,
         };
         self.lead() + content + self.trail()
     }
 }
 
-fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
+fn collect_words<'a>(items: &'a [InlineItem<'a>], fonts: &Fonts) -> Vec<Word<'a>> {
     let mut words: Vec<Word<'a>> = Vec::new();
     let mut carry_space = false;
     let mut stack: Vec<Rc<InlineBoxStyle>> = Vec::new();
@@ -154,6 +167,7 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
         match item {
             InlineItem::Text(run) => {
                 let mut first = true;
+                let face = fonts.select(run.families, run.bold, run.italic);
                 for text in run.text.split_whitespace() {
                     let space_before = if first {
                         carry_space || run.text.starts_with(char::is_whitespace)
@@ -162,7 +176,7 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
                     };
                     first = false;
                     words.push(Word {
-                        piece: Piece::Text { text, run },
+                        piece: Piece::Text { text, run, face },
                         space_before,
                         break_before: false,
                         opens: std::mem::take(&mut pending),
@@ -204,15 +218,15 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
     words
 }
 
-fn split_long_word<'a>(word: Word<'a>, width: f32, font: &Font) -> Vec<Word<'a>> {
-    let Piece::Text { text, run } = word.piece else {
+fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a>> {
+    let Piece::Text { text, run, face } = word.piece else {
         return vec![word];
     };
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut piece_width = 0.0;
     for (index, c) in text.char_indices() {
-        let advance = font.metrics(c, run.font_size).advance_width;
+        let advance = fonts.font(face).metrics(c, run.font_size).advance_width;
         if piece_width + advance > width && index > start {
             pieces.push(&text[start..index]);
             start = index;
@@ -226,7 +240,11 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, font: &Font) -> Vec<Word<'a>>
     let mut result = Vec::new();
     for (index, piece) in pieces.into_iter().enumerate() {
         result.push(Word {
-            piece: Piece::Text { text: piece, run },
+            piece: Piece::Text {
+                text: piece,
+                run,
+                face,
+            },
             space_before: index == 0 && word.space_before,
             break_before: true,
             opens: if index == 0 {
@@ -245,11 +263,11 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, font: &Font) -> Vec<Word<'a>>
     result
 }
 
-fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, font: &Font) -> Vec<Word<'a>> {
+fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a>> {
     let mut fitted = Vec::new();
     for word in words {
-        if matches!(word.piece, Piece::Text { .. }) && word.width(font) > width {
-            fitted.extend(split_long_word(word, width, font));
+        if matches!(word.piece, Piece::Text { .. }) && word.width(fonts) > width {
+            fitted.extend(split_long_word(word, width, fonts));
         } else {
             fitted.push(word);
         }
@@ -257,14 +275,14 @@ fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, font: &Font) -> Vec<Word<'a>>
     fitted
 }
 
-pub fn max_content_width(content: &InlineContent, font: &Font) -> f32 {
-    let words = collect_words(&content.items);
+pub fn max_content_width(content: &InlineContent, fonts: &Fonts) -> f32 {
+    let words = collect_words(&content.items, fonts);
     let mut total = 0.0;
     for word in &words {
         if total > 0.0 && word.space_before {
-            total += text::text_width(font, " ", word.font_size());
+            total += fonts.width(word.face(), " ", word.font_size());
         }
-        total += word.width(font);
+        total += word.width(fonts);
     }
     total
 }
@@ -274,10 +292,10 @@ pub fn layout_lines(
     width: f32,
     origin_x: f32,
     origin_y: f32,
-    font: &Font,
+    fonts: &Fonts,
     floats: &FloatContext,
 ) -> Lines {
-    let words = fit_words(collect_words(&content.items), width, font);
+    let words = fit_words(collect_words(&content.items, fonts), width, fonts);
     let mut lines = Lines::default();
     let mut line: Vec<PlacedWord> = Vec::new();
     let mut area = Area {
@@ -289,14 +307,14 @@ pub fn layout_lines(
     let mut top = 0.0;
 
     for word in &words {
-        let word_width = word.width(font);
+        let word_width = word.width(fonts);
         let mut space = 0.0;
         if x > 0.0 && word.space_before {
-            space = text::text_width(font, " ", word.font_size());
+            space = fonts.width(word.face(), " ", word.font_size());
         }
         let overflows = x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
-            top += finish_line(&line, content.align, &area, top, font, &mut lines);
+            top += finish_line(&line, content.align, &area, top, fonts, &mut lines);
             line.clear();
             x = 0.0;
             space = 0.0;
@@ -321,7 +339,7 @@ pub fn layout_lines(
         x += space + word_width;
     }
     if !line.is_empty() {
-        top += finish_line(&line, content.align, &area, top, font, &mut lines);
+        top += finish_line(&line, content.align, &area, top, fonts, &mut lines);
     }
     lines.height = top;
     lines
@@ -332,19 +350,19 @@ fn finish_line(
     align: TextAlign,
     area: &Area,
     top: f32,
-    font: &Font,
+    fonts: &Fonts,
     lines: &mut Lines,
 ) -> f32 {
     let mut above: f32 = 0.0;
     let mut below: f32 = 0.0;
     for placed in line {
         match &placed.word.piece {
-            Piece::Text { run, .. } => {
-                let ascent = text::ascent(font, run.font_size);
-                let descent = text::descent(font, run.font_size);
+            Piece::Text { run, face, .. } => {
+                let ascent = fonts.ascent(*face, run.font_size);
+                let descent = fonts.descent(*face, run.font_size);
                 let line_height = match run.line_height {
                     Some(height) => height,
-                    None => text::line_height(font, run.font_size),
+                    None => fonts.line_height(*face, run.font_size),
                 };
                 let word_above = (line_height - ascent - descent) / 2.0 + ascent;
                 above = above.max(word_above);
@@ -371,6 +389,7 @@ fn finish_line(
             Piece::Text {
                 text: word_text,
                 run,
+                face,
             } => {
                 lines.fragments.push(Fragment {
                     x,
@@ -378,6 +397,7 @@ fn finish_line(
                     text: word_text.to_string(),
                     color: run.color,
                     font_size: run.font_size,
+                    face: *face,
                 });
             }
             Piece::Image(image) => {
@@ -395,11 +415,11 @@ fn finish_line(
             }
         }
     }
-    push_boxes(line, origin, baseline, font, lines);
+    push_boxes(line, origin, baseline, fonts, lines);
     above + below
 }
 
-fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, font: &Font, lines: &mut Lines) {
+fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
     let mut styles: Vec<Rc<InlineBoxStyle>> = Vec::new();
     for placed in line {
         for style in &placed.word.stack {
@@ -437,8 +457,8 @@ fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, font: &Font, line
         }
 
         let font_size = first_word.font_size();
-        let ascent = text::ascent(font, font_size);
-        let descent = text::descent(font, font_size);
+        let ascent = fonts.ascent(first_word.face(), font_size);
+        let descent = fonts.descent(first_word.face(), font_size);
         let above = style.padding[0] + style.border[0];
         let below = style.padding[2] + style.border[2];
         lines.boxes.push(InlineBoxFragment {

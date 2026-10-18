@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use fontdue::Font;
+use crate::text::Fonts;
 
 use crate::css::Color;
 use crate::inline::{Fragment, ImageFragment};
@@ -79,11 +79,11 @@ impl Canvas {
         }
     }
 
-    fn draw_text(&mut self, fragment: &Fragment, font: &Font) {
+    fn draw_text(&mut self, fragment: &Fragment, fonts: &Fonts) {
         let mut pen_x = fragment.x;
         let baseline = fragment.baseline.round() as i64;
         for c in fragment.text.chars() {
-            let (metrics, bitmap) = font.rasterize(c, fragment.font_size);
+            let (metrics, bitmap) = fonts.font(fragment.face).rasterize(c, fragment.font_size);
             let left = (pen_x + metrics.xmin as f32).round() as i64;
             let top = baseline - metrics.height as i64 - i64::from(metrics.ymin);
             for row in 0..metrics.height {
@@ -227,7 +227,13 @@ fn blend_channel(background: u8, foreground: u8, coverage: u8) -> u8 {
 
 type DisplayList = Vec<(DisplayCommand, bool)>;
 
-pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font: &Font) -> Canvas {
+pub fn paint(
+    root: &LayoutBox,
+    width: usize,
+    height: usize,
+    scroll_y: f32,
+    fonts: &Fonts,
+) -> Canvas {
     let mut list = DisplayList::new();
     paint_stacking(root, false, &mut list);
     let mut canvas = Canvas::filled(width, height, canvas_background(root));
@@ -242,7 +248,7 @@ pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font:
             DisplayCommand::Text(fragment) => {
                 let mut shifted = fragment.clone();
                 shifted.baseline -= offset;
-                canvas.draw_text(&shifted, font);
+                canvas.draw_text(&shifted, fonts);
             }
             DisplayCommand::Image(image) => {
                 let mut rect = image.rect;
