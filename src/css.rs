@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::calc::{self, Linear};
+use crate::media::MediaList;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
@@ -11,6 +12,7 @@ pub struct Stylesheet {
 pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
+    pub media: Vec<MediaList>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -260,20 +262,50 @@ fn scan_top_level(source: &str) -> Vec<TopLevel<'_>> {
     items
 }
 
+const MAX_MEDIA_DEPTH: usize = 8;
+
 pub fn parse(source: &str) -> Stylesheet {
     let source = strip_comments(source);
     let mut rules = Vec::new();
-    for item in scan_top_level(&source) {
-        if let TopLevel::Block { prelude, body } = item {
-            if prelude.starts_with('@') {
-                continue;
-            }
-            if let Some(rule) = parse_rule(prelude, body) {
+    collect_rules(&source, &[], &mut rules);
+    Stylesheet { rules }
+}
+
+fn collect_rules(source: &str, media: &[MediaList], rules: &mut Vec<Rule>) {
+    for item in scan_top_level(source) {
+        let TopLevel::Block { prelude, body } = item else {
+            continue;
+        };
+        if !prelude.starts_with('@') {
+            if let Some(mut rule) = parse_rule(prelude, body) {
+                rule.media = media.to_vec();
                 rules.push(rule);
             }
+            continue;
         }
+        let Some(condition) = media_condition(prelude) else {
+            continue;
+        };
+        if media.len() >= MAX_MEDIA_DEPTH {
+            continue;
+        }
+        let mut nested = media.to_vec();
+        nested.push(MediaList::parse(condition));
+        collect_rules(body, &nested, rules);
     }
-    Stylesheet { rules }
+}
+
+fn media_condition(prelude: &str) -> Option<&str> {
+    let head = prelude.get(..6)?;
+    if !head.eq_ignore_ascii_case("@media") {
+        return None;
+    }
+    let rest = &prelude[6..];
+    if rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '(') {
+        Some(rest.trim())
+    } else {
+        None
+    }
 }
 
 pub fn parse_imports(source: &str) -> Vec<Import> {
@@ -351,6 +383,7 @@ fn parse_rule(selector_text: &str, block: &str) -> Option<Rule> {
     Some(Rule {
         selectors,
         declarations: parse_declarations(block),
+        media: Vec::new(),
     })
 }
 

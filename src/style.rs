@@ -255,7 +255,7 @@ fn style_node<'a>(
             children: Vec::new(),
         },
         NodeType::Element(element) => {
-            let mut values = specified_values(element, ancestors, context.stylesheet, inherited);
+            let mut values = specified_values(element, ancestors, context, inherited);
             resolve_viewport_units(&mut values, context.viewport, root_font_size);
             resolve_font_size(&mut values, parent);
             resolve_line_height(&mut values);
@@ -351,11 +351,19 @@ fn resolve_line_height(values: &mut PropertyMap) {
 fn specified_values(
     element: &ElementData,
     ancestors: &[&ElementData],
-    stylesheet: &Stylesheet,
+    context: &StyleContext,
     inherited: PropertyMap,
 ) -> PropertyMap {
+    let viewport = context.viewport;
     let mut matched: Vec<(Specificity, &Rule)> = Vec::new();
-    for rule in &stylesheet.rules {
+    for rule in &context.stylesheet.rules {
+        if !rule
+            .media
+            .iter()
+            .all(|list| list.matches(viewport.width, viewport.height))
+        {
+            continue;
+        }
         if let Some(specificity) = match_rule(element, ancestors, rule) {
             matched.push((specificity, rule));
         }

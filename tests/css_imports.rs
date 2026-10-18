@@ -40,10 +40,13 @@ fn at_rules_do_not_disturb_the_following_rules() {
     let sheet = css::parse(
         "@import \"x.css\"; a { width: 1px } @media screen { b { width: 2px } c { width: 3px } } @font-face { font-family: X; src: url(a;b) } @keyframes k { from { width: 1px } to { width: 2px } } d { width: 4px }",
     );
-    assert_eq!(sheet.rules.len(), 2);
+    assert_eq!(sheet.rules.len(), 4);
     assert_eq!(sheet.rules[0].selectors[0].tag_name.as_deref(), Some("a"));
-    assert_eq!(sheet.rules[1].selectors[0].tag_name.as_deref(), Some("d"));
-    assert_eq!(sheet.rules[1].declarations[0].value, Value::Length(4.0));
+    assert_eq!(sheet.rules[1].selectors[0].tag_name.as_deref(), Some("b"));
+    assert_eq!(sheet.rules[2].selectors[0].tag_name.as_deref(), Some("c"));
+    assert_eq!(sheet.rules[3].selectors[0].tag_name.as_deref(), Some("d"));
+    assert_eq!(sheet.rules[3].declarations[0].value, Value::Length(4.0));
+    assert!(sheet.rules[3].media.is_empty());
 }
 
 #[test]

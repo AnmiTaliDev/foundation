@@ -11,6 +11,7 @@ pub mod inline;
 pub mod layout;
 pub mod loader;
 pub mod location;
+pub mod media;
 pub mod page;
 pub mod paint;
 pub mod picture;
