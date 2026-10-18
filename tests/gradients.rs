@@ -310,3 +310,34 @@ fn gradients_are_parsed_into_structures() {
     )
     .is_empty());
 }
+
+#[test]
+fn all_css_named_colors_are_recognised() {
+    let cases = [
+        ("orange", (255, 165, 0)),
+        ("gray", (128, 128, 128)),
+        ("grey", (128, 128, 128)),
+        ("lightgray", (211, 211, 211)),
+        ("whitesmoke", (245, 245, 245)),
+        ("rebeccapurple", (102, 51, 153)),
+        ("cornflowerblue", (100, 149, 237)),
+        ("lightgoldenrodyellow", (250, 250, 210)),
+        ("yellowgreen", (154, 205, 50)),
+        ("TOMATO", (255, 99, 71)),
+        ("red", (255, 0, 0)),
+        ("silver", (192, 192, 192)),
+        ("teal", (0, 128, 128)),
+    ];
+    for (name, (r, g, b)) in cases {
+        assert_eq!(
+            value_of(&format!("color: {}", name)),
+            Some(color(r, g, b)),
+            "{}",
+            name
+        );
+    }
+    assert_eq!(
+        value_of("color: notacolor"),
+        Some(Value::Keyword("notacolor".to_string()))
+    );
+}
