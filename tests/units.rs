@@ -133,7 +133,12 @@ fn calc_resolves_in_layout() {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(200.0, 100.0)).unwrap();
     let font = text::default_font();
-    let layout_root = layout::layout_tree(&styled, 200.0, &font, &layout::ImageMap::new());
+    let layout_root = layout::layout_tree(
+        &styled,
+        style::Viewport::new(200.0, 600.0),
+        &font,
+        &layout::ImageMap::new(),
+    );
     let div = &layout_root.children[0].children[0];
     assert_eq!(div.dimensions.content.width, 180.0);
     assert_eq!(div.dimensions.margin.left, 12.0);

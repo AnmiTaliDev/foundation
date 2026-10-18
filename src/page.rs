@@ -92,7 +92,7 @@ impl Page {
         match style::style_tree(&self.document, &self.stylesheet, viewport) {
             Some(styled_root) => {
                 let layout_root =
-                    layout::layout_tree(&styled_root, width as f32, &self.font, &self.images);
+                    layout::layout_tree(&styled_root, viewport, &self.font, &self.images);
                 let content_height = layout_root.dimensions.margin_box().height;
                 let max_scroll = (content_height - height as f32).max(0.0);
                 let scroll_y = scroll_y.clamp(0.0, max_scroll);

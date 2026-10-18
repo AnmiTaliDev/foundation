@@ -29,6 +29,14 @@ pub enum Display {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Position {
+    Static,
+    Relative,
+    Absolute,
+    Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Clear {
     None,
     Left,
@@ -424,8 +432,33 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn position(&self) -> Position {
+        match self.value("position") {
+            Some(Value::Keyword(keyword)) if keyword == "relative" => Position::Relative,
+            Some(Value::Keyword(keyword)) if keyword == "absolute" => Position::Absolute,
+            Some(Value::Keyword(keyword)) if keyword == "fixed" => Position::Fixed,
+            _ => Position::Static,
+        }
+    }
+
+    pub fn is_positioned(&self) -> bool {
+        self.position() != Position::Static
+    }
+
+    pub fn is_out_of_flow(&self) -> bool {
+        matches!(self.position(), Position::Absolute | Position::Fixed)
+    }
+
+    pub fn z_index(&self) -> Option<i32> {
+        match self.value("z-index") {
+            Some(Value::Number(number)) => Some(*number as i32),
+            Some(Value::Length(px)) if *px == 0.0 => Some(0),
+            _ => None,
+        }
+    }
+
     pub fn establishes_block_context(&self) -> bool {
-        if self.float().is_some() {
+        if self.float().is_some() || self.is_out_of_flow() {
             return true;
         }
         match self.value("overflow") {

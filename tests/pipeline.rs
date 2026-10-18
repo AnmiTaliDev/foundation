@@ -108,7 +108,7 @@ fn layout_fills_container_width_with_auto() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        100.0,
+        style::Viewport::new(100.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -128,7 +128,7 @@ fn layout_centers_with_auto_margins() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        100.0,
+        style::Viewport::new(100.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -146,7 +146,7 @@ fn layout_skips_display_none() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        100.0,
+        style::Viewport::new(100.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -218,7 +218,12 @@ fn inline_runs_share_a_line_and_respect_spaces() {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let font = text::default_font();
-    let layout_root = layout::layout_tree(&styled, 500.0, &font, &layout::ImageMap::new());
+    let layout_root = layout::layout_tree(
+        &styled,
+        style::Viewport::new(500.0, 600.0),
+        &font,
+        &layout::ImageMap::new(),
+    );
     let anonymous = first_anonymous(&layout_root).unwrap();
     let fragments = &anonymous.fragments;
     assert_eq!(fragments.len(), 3);
@@ -237,8 +242,18 @@ fn text_wraps_at_container_width() {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let font = text::default_font();
-    let wide = layout::layout_tree(&styled, 1000.0, &font, &layout::ImageMap::new());
-    let narrow = layout::layout_tree(&styled, 60.0, &font, &layout::ImageMap::new());
+    let wide = layout::layout_tree(
+        &styled,
+        style::Viewport::new(1000.0, 600.0),
+        &font,
+        &layout::ImageMap::new(),
+    );
+    let narrow = layout::layout_tree(
+        &styled,
+        style::Viewport::new(60.0, 600.0),
+        &font,
+        &layout::ImageMap::new(),
+    );
     let wide_text = first_anonymous(&wide).unwrap();
     let narrow_text = first_anonymous(&narrow).unwrap();
     assert_eq!(
@@ -260,7 +275,7 @@ fn text_inherits_color_and_size() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        200.0,
+        style::Viewport::new(200.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -415,7 +430,7 @@ fn em_and_percent_resolve_in_layout() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        200.0,
+        style::Viewport::new(200.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -468,7 +483,7 @@ fn with_layout(source: &str, width: f32, check: impl FnOnce(&layout::LayoutBox))
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        width,
+        style::Viewport::new(width, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -618,7 +633,7 @@ fn inline_background_covers_words_and_gap() {
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(800.0, 600.0)).unwrap();
     let layout_root = layout::layout_tree(
         &styled,
-        200.0,
+        style::Viewport::new(200.0, 600.0),
         &text::default_font(),
         &layout::ImageMap::new(),
     );
@@ -635,4 +650,22 @@ fn inline_background_covers_words_and_gap() {
     let x = (first.x + 1.0) as usize;
     let y = (first.y + 1.0).round() as usize;
     assert_eq!(canvas.pixel(x, y), GREEN);
+}
+
+#[test]
+fn text_before_a_block_keeps_the_parents_alignment() {
+    let source = "<html><style>body { margin: 0 } .c { text-align: center }</style><body>left text<div class=\"c\">centered</div></body></html>";
+    let root = html::parse(source);
+    let sheet = style::stylesheet_for_document(&root);
+    let styled = style::style_tree(&root, &sheet, style::Viewport::new(200.0, 100.0)).unwrap();
+    let layout_root = layout::layout_tree(
+        &styled,
+        style::Viewport::new(200.0, 100.0),
+        &text::default_font(),
+        &layout::ImageMap::new(),
+    );
+    let first = first_anonymous(&layout_root).unwrap();
+    assert_eq!(first.fragments[0].x, 0.0);
+    let centered = &layout_root.children[0].children[1].children[0];
+    assert!(centered.fragments[0].x > 0.0);
 }

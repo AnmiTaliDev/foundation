@@ -6,7 +6,7 @@ use crate::css::Color;
 use crate::inline::{Fragment, ImageFragment};
 use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
-use crate::style::Content;
+use crate::style::{Content, Position};
 
 const WHITE: Color = Color {
     r: 255,
@@ -165,25 +165,28 @@ fn blend_channel(background: u8, foreground: u8, coverage: u8) -> u8 {
         as u8
 }
 
+type DisplayList = Vec<(DisplayCommand, bool)>;
+
 pub fn paint(root: &LayoutBox, width: usize, height: usize, scroll_y: f32, font: &Font) -> Canvas {
-    let mut list = Vec::new();
-    build_display_list(root, &mut list);
+    let mut list = DisplayList::new();
+    paint_stacking(root, false, &mut list);
     let mut canvas = Canvas::filled(width, height, canvas_background(root));
-    for command in &list {
+    for (command, fixed) in &list {
+        let offset = if *fixed { 0.0 } else { scroll_y };
         match command {
             DisplayCommand::Rect(item) => {
                 let mut shifted = *item;
-                shifted.rect.y -= scroll_y;
+                shifted.rect.y -= offset;
                 canvas.fill(&shifted);
             }
             DisplayCommand::Text(fragment) => {
                 let mut shifted = fragment.clone();
-                shifted.baseline -= scroll_y;
+                shifted.baseline -= offset;
                 canvas.draw_text(&shifted, font);
             }
             DisplayCommand::Image(image) => {
                 let mut rect = image.rect;
-                rect.y -= scroll_y;
+                rect.y -= offset;
                 canvas.draw_picture(&rect, &image.picture);
             }
         }
@@ -209,20 +212,114 @@ fn canvas_background(root: &LayoutBox) -> Color {
     WHITE
 }
 
-fn build_display_list(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
-    paint_background(layout_box, list);
-    paint_borders(layout_box, list);
+struct Positioned<'a, 'b> {
+    z_index: i32,
+    creates_context: bool,
+    fixed: bool,
+    layout_box: &'b LayoutBox<'a>,
+}
+
+fn is_positioned(layout_box: &LayoutBox) -> bool {
+    match layout_box.kind {
+        BoxKind::Block(style) => style.is_positioned(),
+        BoxKind::Anonymous(_) => false,
+    }
+}
+
+fn is_fixed(layout_box: &LayoutBox) -> bool {
+    match layout_box.kind {
+        BoxKind::Block(style) => style.position() == Position::Fixed,
+        BoxKind::Anonymous(_) => false,
+    }
+}
+
+fn emit(list: &mut DisplayList, fixed: bool, commands: Vec<DisplayCommand>) {
+    for command in commands {
+        list.push((command, fixed));
+    }
+}
+
+fn decoration_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
+    let mut commands = Vec::new();
+    paint_background(layout_box, &mut commands);
+    paint_borders(layout_box, &mut commands);
+    commands
+}
+
+fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
+    let mut commands = Vec::new();
     for fragment in &layout_box.fragments {
         if let Some((color, rect)) = fragment.background {
-            list.push(DisplayCommand::Rect(SolidRect { color, rect }));
+            commands.push(DisplayCommand::Rect(SolidRect { color, rect }));
         }
-        list.push(DisplayCommand::Text(fragment.clone()));
+        commands.push(DisplayCommand::Text(fragment.clone()));
     }
     for image in &layout_box.images {
-        list.push(DisplayCommand::Image(image.clone()));
+        commands.push(DisplayCommand::Image(image.clone()));
     }
-    for child in &layout_box.children {
-        build_display_list(child, list);
+    commands
+}
+
+fn collect_positioned<'a, 'b>(
+    children: &'b [LayoutBox<'a>],
+    fixed: bool,
+    out: &mut Vec<Positioned<'a, 'b>>,
+) {
+    for child in children {
+        let BoxKind::Block(style) = child.kind else {
+            continue;
+        };
+        if !style.is_positioned() {
+            collect_positioned(&child.children, fixed, out);
+            continue;
+        }
+        let child_fixed = fixed || is_fixed(child);
+        let z_index = style.z_index();
+        out.push(Positioned {
+            z_index: z_index.unwrap_or(0),
+            creates_context: z_index.is_some(),
+            fixed: child_fixed,
+            layout_box: child,
+        });
+        if z_index.is_none() {
+            collect_positioned(&child.children, child_fixed, out);
+        }
+    }
+}
+
+fn paint_flow(children: &[LayoutBox], fixed: bool, list: &mut DisplayList) {
+    for child in children {
+        if is_positioned(child) {
+            continue;
+        }
+        emit(list, fixed, decoration_commands(child));
+        emit(list, fixed, content_commands(child));
+        paint_flow(&child.children, fixed, list);
+    }
+}
+
+fn paint_positioned(item: &Positioned, list: &mut DisplayList) {
+    if item.creates_context {
+        paint_stacking(item.layout_box, item.fixed, list);
+    } else {
+        emit(list, item.fixed, decoration_commands(item.layout_box));
+        emit(list, item.fixed, content_commands(item.layout_box));
+        paint_flow(&item.layout_box.children, item.fixed, list);
+    }
+}
+
+fn paint_stacking(layout_box: &LayoutBox, fixed: bool, list: &mut DisplayList) {
+    emit(list, fixed, decoration_commands(layout_box));
+    let mut positioned = Vec::new();
+    collect_positioned(&layout_box.children, fixed, &mut positioned);
+    positioned.sort_by_key(|item| item.z_index);
+    for item in positioned.iter().filter(|item| item.z_index < 0) {
+        paint_positioned(item, list);
+    }
+    emit(list, fixed, content_commands(layout_box));
+    paint_flow(&layout_box.children, fixed, list);
+    for item in positioned.iter().filter(|item| item.z_index >= 0) {
+        paint_positioned(item, list);
     }
 }
 

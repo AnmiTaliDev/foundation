@@ -17,7 +17,12 @@ fn with_layout(source: &str, width: f32, check: impl FnOnce(&LayoutBox)) {
     let sheet = style::stylesheet_for_document(&root);
     let styled = style::style_tree(&root, &sheet, style::Viewport::new(width, 600.0)).unwrap();
     let font = text::default_font();
-    let layout_root = layout::layout_tree(&styled, width, &font, &ImageMap::new());
+    let layout_root = layout::layout_tree(
+        &styled,
+        style::Viewport::new(width, 600.0),
+        &font,
+        &ImageMap::new(),
+    );
     check(&layout_root);
 }
 
