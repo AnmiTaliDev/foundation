@@ -5,10 +5,12 @@ use std::rc::Rc;
 
 use fontdue::Font;
 
-use crate::css::Color;
 use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
-use crate::inline::{self, Fragment, ImageFragment, ImageRun, InlineContent, InlineItem, Run};
+use crate::inline::{
+    self, Fragment, ImageFragment, ImageRun, InlineBoxFragment, InlineBoxStyle, InlineContent,
+    InlineItem, Run,
+};
 use crate::picture::Picture;
 use crate::style::{
     Clear, Content, Display, FlexDirection, Position, StyledNode, TextAlign, Viewport,
@@ -53,6 +55,7 @@ pub struct LayoutBox<'a> {
     pub children: Vec<LayoutBox<'a>>,
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
+    pub inline_boxes: Vec<InlineBoxFragment>,
     pub(crate) forced_width: Option<f32>,
     pub(crate) forced_height: Option<f32>,
     pub(crate) static_position: Option<(f32, f32)>,
@@ -119,6 +122,7 @@ impl<'a> LayoutBox<'a> {
             children,
             fragments: Vec::new(),
             images: Vec::new(),
+            inline_boxes: Vec::new(),
             forced_width: None,
             forced_height: None,
             static_position: None,
@@ -127,34 +131,69 @@ impl<'a> LayoutBox<'a> {
     }
 }
 
+struct Flow<'a> {
+    children: Vec<LayoutBox<'a>>,
+    items: Vec<InlineItem<'a>>,
+    next_box_id: usize,
+}
+
 fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBox<'a> {
-    let mut children = Vec::new();
-    let mut items = Vec::new();
+    let mut flow = Flow {
+        children: Vec::new(),
+        items: Vec::new(),
+        next_box_id: 0,
+    };
     let align = style.text_align();
     let blockify = style.display() == Display::Flex;
     for child in &style.children {
-        collect_child(
-            child,
-            align,
-            blockify,
-            None,
-            images,
-            &mut children,
-            &mut items,
-        );
+        collect_child(child, align, blockify, images, &mut flow);
     }
-    flush_items(align, &mut children, &mut items);
-    LayoutBox::new(BoxKind::Block(style), children)
+    flush_items(align, &mut flow);
+    LayoutBox::new(BoxKind::Block(style), flow.children)
+}
+
+fn inline_box_style(node: &StyledNode, id: usize) -> Option<Rc<InlineBoxStyle>> {
+    let edge = |names: [&str; 4]| names.map(|name| node.px(name, 0.0));
+    let padding = edge([
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left",
+    ]);
+    let border = edge([
+        "border-top-width",
+        "border-right-width",
+        "border-bottom-width",
+        "border-left-width",
+    ]);
+    let margin_left = node.px("margin-left", 0.0);
+    let margin_right = node.px("margin-right", 0.0);
+    let background = node.background();
+    let decorated = background.is_some()
+        || padding.iter().any(|size| *size != 0.0)
+        || border.iter().any(|size| *size != 0.0)
+        || margin_left != 0.0
+        || margin_right != 0.0;
+    if !decorated {
+        return None;
+    }
+    Some(Rc::new(InlineBoxStyle {
+        id,
+        background,
+        border_color: node.color("border-color"),
+        padding,
+        border,
+        margin_left,
+        margin_right,
+    }))
 }
 
 fn collect_child<'a>(
     node: &'a StyledNode<'a>,
     align: TextAlign,
     blockify: bool,
-    background: Option<Color>,
     images: &ImageMap,
-    children: &mut Vec<LayoutBox<'a>>,
-    items: &mut Vec<InlineItem<'a>>,
+    flow: &mut Flow<'a>,
 ) {
     let display = node.display();
     let floated = node.float().is_some()
@@ -163,25 +202,24 @@ fn collect_child<'a>(
     match display {
         Display::None => {}
         Display::Block | Display::Flex => {
-            flush_items(align, children, items);
-            children.push(build_block_box(node, images));
+            flush_items(align, flow);
+            flow.children.push(build_block_box(node, images));
         }
         Display::Inline if floated => {
-            flush_items(align, children, items);
-            children.push(build_block_box(node, images));
+            flush_items(align, flow);
+            flow.children.push(build_block_box(node, images));
         }
         Display::Inline => match node.content {
-            Content::Text(text) => items.push(InlineItem::Text(Run {
+            Content::Text(text) => flow.items.push(InlineItem::Text(Run {
                 text,
                 color: node.text_color(),
                 font_size: node.font_size(),
                 line_height: node.line_height(),
-                background,
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
                 let (width, height) = replaced_size(node, element, picture.as_deref(), None);
-                items.push(InlineItem::Image(ImageRun {
+                flow.items.push(InlineItem::Image(ImageRun {
                     picture,
                     width,
                     height,
@@ -189,9 +227,16 @@ fn collect_child<'a>(
                 }));
             }
             Content::Element(_) => {
-                let background = node.background().or(background);
+                let style = inline_box_style(node, flow.next_box_id);
+                flow.next_box_id += 1;
+                if let Some(style) = &style {
+                    flow.items.push(InlineItem::Open(style.clone()));
+                }
                 for child in &node.children {
-                    collect_child(child, align, false, background, images, children, items);
+                    collect_child(child, align, false, images, flow);
+                }
+                if let Some(style) = &style {
+                    flow.items.push(InlineItem::Close(style.id));
                 }
             }
         },
@@ -237,13 +282,9 @@ fn replaced_size(
     }
 }
 
-fn flush_items<'a>(
-    align: TextAlign,
-    children: &mut Vec<LayoutBox<'a>>,
-    items: &mut Vec<InlineItem<'a>>,
-) {
+fn flush_items(align: TextAlign, flow: &mut Flow) {
     let mut has_content = false;
-    for item in items.iter() {
+    for item in &flow.items {
         match item {
             InlineItem::Text(run) => {
                 if !run.text.trim().is_empty() {
@@ -251,18 +292,19 @@ fn flush_items<'a>(
                 }
             }
             InlineItem::Image(_) => has_content = true,
+            InlineItem::Open(_) | InlineItem::Close(_) => {}
         }
     }
     if has_content {
-        children.push(LayoutBox::new(
+        flow.children.push(LayoutBox::new(
             BoxKind::Anonymous(InlineContent {
-                items: std::mem::take(items),
+                items: std::mem::take(&mut flow.items),
                 align,
             }),
             Vec::new(),
         ));
     } else {
-        items.clear();
+        flow.items.clear();
     }
 }
 
@@ -393,6 +435,7 @@ impl<'a> LayoutBox<'a> {
                 area.height = lines.height;
                 self.fragments = lines.fragments;
                 self.images = lines.images;
+                self.inline_boxes = lines.boxes;
             }
         }
     }
@@ -749,6 +792,7 @@ impl<'a> LayoutBox<'a> {
         self.dimensions = Dimensions::default();
         self.fragments.clear();
         self.images.clear();
+        self.inline_boxes.clear();
         for child in &mut self.children {
             child.reset();
         }
@@ -768,10 +812,10 @@ impl<'a> LayoutBox<'a> {
         for fragment in &mut self.fragments {
             fragment.x += dx;
             fragment.baseline += dy;
-            if let Some((_, rect)) = &mut fragment.background {
-                rect.x += dx;
-                rect.y += dy;
-            }
+        }
+        for inline_box in &mut self.inline_boxes {
+            inline_box.rect.x += dx;
+            inline_box.rect.y += dy;
         }
         for image in &mut self.images {
             image.rect.x += dx;

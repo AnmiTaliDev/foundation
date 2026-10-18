@@ -17,7 +17,6 @@ pub struct Run<'a> {
     pub color: Color,
     pub font_size: f32,
     pub line_height: Option<f32>,
-    pub background: Option<Color>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,9 +28,32 @@ pub struct ImageRun {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct InlineBoxStyle {
+    pub id: usize,
+    pub background: Option<Color>,
+    pub border_color: Option<Color>,
+    pub padding: [f32; 4],
+    pub border: [f32; 4],
+    pub margin_left: f32,
+    pub margin_right: f32,
+}
+
+impl InlineBoxStyle {
+    fn left_extra(&self) -> f32 {
+        self.margin_left + self.border[3] + self.padding[3]
+    }
+
+    fn right_extra(&self) -> f32 {
+        self.margin_right + self.border[1] + self.padding[1]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum InlineItem<'a> {
     Text(Run<'a>),
     Image(ImageRun),
+    Open(Rc<InlineBoxStyle>),
+    Close(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +69,14 @@ pub struct Fragment {
     pub text: String,
     pub color: Color,
     pub font_size: f32,
-    pub background: Option<(Color, Rect)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InlineBoxFragment {
+    pub rect: Rect,
+    pub background: Option<Color>,
+    pub border: [f32; 4],
+    pub border_color: Option<Color>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,9 +89,11 @@ pub struct ImageFragment {
 pub struct Lines {
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
+    pub boxes: Vec<InlineBoxFragment>,
     pub height: f32,
 }
 
+#[derive(Clone, Copy)]
 enum Piece<'a> {
     Text { text: &'a str, run: &'a Run<'a> },
     Image(&'a ImageRun),
@@ -72,6 +103,9 @@ struct Word<'a> {
     piece: Piece<'a>,
     space_before: bool,
     break_before: bool,
+    opens: Vec<Rc<InlineBoxStyle>>,
+    closes: Vec<Rc<InlineBoxStyle>>,
+    stack: Vec<Rc<InlineBoxStyle>>,
 }
 
 struct PlacedWord<'a, 'b> {
@@ -94,24 +128,28 @@ impl Word<'_> {
         }
     }
 
-    fn width(&self, font: &Font) -> f32 {
-        match &self.piece {
-            Piece::Text { text, run } => text::text_width(font, text, run.font_size),
-            Piece::Image(image) => image.width,
-        }
+    fn lead(&self) -> f32 {
+        self.opens.iter().map(|style| style.left_extra()).sum()
     }
 
-    fn background(&self) -> Option<Color> {
-        match &self.piece {
-            Piece::Text { run, .. } => run.background,
-            Piece::Image(_) => None,
-        }
+    fn trail(&self) -> f32 {
+        self.closes.iter().map(|style| style.right_extra()).sum()
+    }
+
+    fn width(&self, font: &Font) -> f32 {
+        let content = match &self.piece {
+            Piece::Text { text, run } => text::text_width(font, text, run.font_size),
+            Piece::Image(image) => image.width,
+        };
+        self.lead() + content + self.trail()
     }
 }
 
 fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
-    let mut words = Vec::new();
+    let mut words: Vec<Word<'a>> = Vec::new();
     let mut carry_space = false;
+    let mut stack: Vec<Rc<InlineBoxStyle>> = Vec::new();
+    let mut pending: Vec<Rc<InlineBoxStyle>> = Vec::new();
     for item in items {
         match item {
             InlineItem::Text(run) => {
@@ -127,6 +165,9 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
                         piece: Piece::Text { text, run },
                         space_before,
                         break_before: false,
+                        opens: std::mem::take(&mut pending),
+                        closes: Vec::new(),
+                        stack: stack.clone(),
                     });
                 }
                 carry_space = run.text.ends_with(char::is_whitespace);
@@ -136,21 +177,37 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>]) -> Vec<Word<'a>> {
                     piece: Piece::Image(image),
                     space_before: carry_space,
                     break_before: false,
+                    opens: std::mem::take(&mut pending),
+                    closes: Vec::new(),
+                    stack: stack.clone(),
                 });
                 carry_space = false;
+            }
+            InlineItem::Open(style) => {
+                stack.push(style.clone());
+                pending.push(style.clone());
+            }
+            InlineItem::Close(id) => {
+                if let Some(position) = pending.iter().position(|style| style.id == *id) {
+                    pending.remove(position);
+                } else if let Some(word) = words.last_mut() {
+                    if let Some(style) = stack.iter().find(|style| style.id == *id) {
+                        word.closes.push(style.clone());
+                    }
+                }
+                if let Some(position) = stack.iter().rposition(|style| style.id == *id) {
+                    stack.remove(position);
+                }
             }
         }
     }
     words
 }
 
-fn split_long_word<'a>(
-    text: &'a str,
-    run: &'a Run<'a>,
-    space_before: bool,
-    width: f32,
-    font: &Font,
-) -> Vec<Word<'a>> {
+fn split_long_word<'a>(word: Word<'a>, width: f32, font: &Font) -> Vec<Word<'a>> {
+    let Piece::Text { text, run } = word.piece else {
+        return vec![word];
+    };
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut piece_width = 0.0;
@@ -165,12 +222,24 @@ fn split_long_word<'a>(
     }
     pieces.push(&text[start..]);
 
+    let count = pieces.len();
     let mut result = Vec::new();
     for (index, piece) in pieces.into_iter().enumerate() {
         result.push(Word {
             piece: Piece::Text { text: piece, run },
-            space_before: index == 0 && space_before,
+            space_before: index == 0 && word.space_before,
             break_before: true,
+            opens: if index == 0 {
+                word.opens.clone()
+            } else {
+                Vec::new()
+            },
+            closes: if index + 1 == count {
+                word.closes.clone()
+            } else {
+                Vec::new()
+            },
+            stack: word.stack.clone(),
         });
     }
     result
@@ -179,11 +248,10 @@ fn split_long_word<'a>(
 fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, font: &Font) -> Vec<Word<'a>> {
     let mut fitted = Vec::new();
     for word in words {
-        match word.piece {
-            Piece::Text { text, run } if word.width(font) > width => {
-                fitted.extend(split_long_word(text, run, word.space_before, width, font));
-            }
-            _ => fitted.push(word),
+        if matches!(word.piece, Piece::Text { .. }) && word.width(font) > width {
+            fitted.extend(split_long_word(word, width, font));
+        } else {
+            fitted.push(word);
         }
     }
     fitted
@@ -295,43 +363,21 @@ fn finish_line(
     }
     .max(0.0);
 
+    let origin = area.origin_x + shift;
     let baseline = area.origin_y + top + above;
-    for (index, placed) in line.iter().enumerate() {
-        let x = area.origin_x + shift + placed.offset;
+    for placed in line {
+        let x = origin + placed.offset + placed.word.lead();
         match &placed.word.piece {
             Piece::Text {
                 text: word_text,
                 run,
             } => {
-                let background = match run.background {
-                    Some(color) => {
-                        let mut right = x + placed.width;
-                        if let Some(next) = line.get(index + 1) {
-                            if next.word.background() == Some(color) {
-                                right = area.origin_x + shift + next.offset;
-                            }
-                        }
-                        let ascent = text::ascent(font, run.font_size);
-                        let descent = text::descent(font, run.font_size);
-                        Some((
-                            color,
-                            Rect {
-                                x,
-                                y: baseline - ascent,
-                                width: right - x,
-                                height: ascent + descent,
-                            },
-                        ))
-                    }
-                    None => None,
-                };
                 lines.fragments.push(Fragment {
                     x,
                     baseline,
                     text: word_text.to_string(),
                     color: run.color,
                     font_size: run.font_size,
-                    background,
                 });
             }
             Piece::Image(image) => {
@@ -349,5 +395,75 @@ fn finish_line(
             }
         }
     }
+    push_boxes(line, origin, baseline, font, lines);
     above + below
+}
+
+fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, font: &Font, lines: &mut Lines) {
+    let mut styles: Vec<Rc<InlineBoxStyle>> = Vec::new();
+    for placed in line {
+        for style in &placed.word.stack {
+            if !styles.iter().any(|known| known.id == style.id) {
+                styles.push(style.clone());
+            }
+        }
+    }
+    for style in &styles {
+        let inside = |placed: &PlacedWord| placed.word.stack.iter().any(|s| s.id == style.id);
+        let Some(first) = line.iter().position(inside) else {
+            continue;
+        };
+        let Some(last) = line.iter().rposition(inside) else {
+            continue;
+        };
+        let first_word = line[first].word;
+        let last_word = line[last].word;
+
+        let opens_here = first_word.opens.iter().position(|s| s.id == style.id);
+        let mut left = origin + line[first].offset;
+        if let Some(index) = opens_here {
+            for outer in &first_word.opens[..index] {
+                left += outer.left_extra();
+            }
+            left += style.margin_left;
+        }
+        let closes_here = last_word.closes.iter().position(|s| s.id == style.id);
+        let mut right = origin + line[last].offset + line[last].width;
+        if let Some(index) = closes_here {
+            for outer in &last_word.closes[index + 1..] {
+                right -= outer.right_extra();
+            }
+            right -= style.margin_right;
+        }
+
+        let font_size = first_word.font_size();
+        let ascent = text::ascent(font, font_size);
+        let descent = text::descent(font, font_size);
+        let above = style.padding[0] + style.border[0];
+        let below = style.padding[2] + style.border[2];
+        lines.boxes.push(InlineBoxFragment {
+            rect: Rect {
+                x: left,
+                y: baseline - ascent - above,
+                width: (right - left).max(0.0),
+                height: ascent + descent + above + below,
+            },
+            background: style.background,
+            border: [
+                style.border[0],
+                if closes_here.is_some() {
+                    style.border[1]
+                } else {
+                    0.0
+                },
+                style.border[2],
+                if opens_here.is_some() {
+                    style.border[3]
+                } else {
+                    0.0
+                },
+            ],
+            border_color: style.border_color,
+        });
+    }
 }

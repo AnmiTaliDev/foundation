@@ -637,13 +637,18 @@ fn inline_background_covers_words_and_gap() {
         &text::default_font(),
         &layout::ImageMap::new(),
     );
-    let fragments = &first_anonymous(&layout_root).unwrap().fragments;
+    let anonymous = first_anonymous(&layout_root).unwrap();
+    let fragments = &anonymous.fragments;
     assert_eq!(fragments.len(), 3);
-    assert!(fragments[0].background.is_none());
-    let (color, first) = fragments[1].background.unwrap();
-    let (_, second) = fragments[2].background.unwrap();
-    assert_eq!(color, GREEN);
-    assert!((first.x + first.width - second.x).abs() < 0.001);
+    assert_eq!(anonymous.inline_boxes.len(), 1);
+    let inline_box = &anonymous.inline_boxes[0];
+    let first = inline_box.rect;
+    assert_eq!(inline_box.background, Some(GREEN));
+    assert!((first.x - fragments[1].x).abs() < 0.001);
+    let font = text::default_font();
+    let end = fragments[2].x + text::text_width(&font, "cd", 16.0);
+    assert!((first.x + first.width - end).abs() < 0.001);
+    assert!(first.x > fragments[0].x);
     assert!(first.height > 0.0);
 
     let canvas = render(source, 200, 40);

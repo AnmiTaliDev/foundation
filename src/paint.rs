@@ -248,10 +248,20 @@ fn decoration_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
 
 fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let mut commands = Vec::new();
-    for fragment in &layout_box.fragments {
-        if let Some((color, rect)) = fragment.background {
-            commands.push(DisplayCommand::Rect(SolidRect { color, rect }));
+    for inline_box in &layout_box.inline_boxes {
+        if let Some(color) = inline_box.background {
+            commands.push(DisplayCommand::Rect(SolidRect {
+                color,
+                rect: inline_box.rect,
+            }));
         }
+        if let Some(color) = inline_box.border_color {
+            for rect in border_edges(&inline_box.rect, inline_box.border) {
+                commands.push(DisplayCommand::Rect(SolidRect { color, rect }));
+            }
+        }
+    }
+    for fragment in &layout_box.fragments {
         commands.push(DisplayCommand::Text(fragment.clone()));
     }
     for image in &layout_box.images {
@@ -335,6 +345,36 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     }
 }
 
+fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {
+    let [top, right, bottom, left] = widths;
+    [
+        Rect {
+            x: border_box.x,
+            y: border_box.y,
+            width: border_box.width,
+            height: top,
+        },
+        Rect {
+            x: border_box.x + border_box.width - right,
+            y: border_box.y,
+            width: right,
+            height: border_box.height,
+        },
+        Rect {
+            x: border_box.x,
+            y: border_box.y + border_box.height - bottom,
+            width: border_box.width,
+            height: bottom,
+        },
+        Rect {
+            x: border_box.x,
+            y: border_box.y,
+            width: left,
+            height: border_box.height,
+        },
+    ]
+}
+
 fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
@@ -343,35 +383,8 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
         return;
     };
     let d = &layout_box.dimensions;
-    let border_box = d.border_box();
-
-    let edges = [
-        Rect {
-            x: border_box.x,
-            y: border_box.y,
-            width: d.border.left,
-            height: border_box.height,
-        },
-        Rect {
-            x: border_box.x + border_box.width - d.border.right,
-            y: border_box.y,
-            width: d.border.right,
-            height: border_box.height,
-        },
-        Rect {
-            x: border_box.x,
-            y: border_box.y,
-            width: border_box.width,
-            height: d.border.top,
-        },
-        Rect {
-            x: border_box.x,
-            y: border_box.y + border_box.height - d.border.bottom,
-            width: border_box.width,
-            height: d.border.bottom,
-        },
-    ];
-    for rect in edges {
+    let widths = [d.border.top, d.border.right, d.border.bottom, d.border.left];
+    for rect in border_edges(&d.border_box(), widths) {
         list.push(DisplayCommand::Rect(SolidRect { color, rect }));
     }
 }
