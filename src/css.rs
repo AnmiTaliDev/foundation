@@ -7,6 +7,7 @@ use crate::supports;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    pub layers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +15,7 @@ pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
     pub media: Vec<MediaList>,
+    pub layer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,36 +269,90 @@ const MAX_NESTING: usize = 8;
 
 pub fn parse(source: &str) -> Stylesheet {
     let source = strip_comments(source);
-    let mut rules = Vec::new();
-    collect_rules(&source, &[], 0, &mut rules);
-    Stylesheet { rules }
+    let mut sheet = Stylesheet {
+        rules: Vec::new(),
+        layers: Vec::new(),
+    };
+    let scope = Scope {
+        media: Vec::new(),
+        layer: None,
+        depth: 0,
+    };
+    collect_rules(&source, &scope, &mut sheet);
+    sheet
 }
 
-fn collect_rules(source: &str, media: &[MediaList], depth: usize, rules: &mut Vec<Rule>) {
+struct Scope {
+    media: Vec<MediaList>,
+    layer: Option<String>,
+    depth: usize,
+}
+
+impl Scope {
+    fn nested(&self) -> Scope {
+        Scope {
+            media: self.media.clone(),
+            layer: self.layer.clone(),
+            depth: self.depth + 1,
+        }
+    }
+}
+
+fn layer_path(parent: &Option<String>, name: &str) -> String {
+    match parent {
+        Some(parent) => format!("{}.{}", parent, name),
+        None => name.to_string(),
+    }
+}
+
+fn register_layer(sheet: &mut Stylesheet, path: String) {
+    if !sheet.layers.contains(&path) {
+        sheet.layers.push(path);
+    }
+}
+
+fn collect_rules(source: &str, scope: &Scope, sheet: &mut Stylesheet) {
     for item in scan_top_level(source) {
-        let TopLevel::Block { prelude, body } = item else {
-            continue;
+        let (prelude, body) = match item {
+            TopLevel::Block { prelude, body } => (prelude, body),
+            TopLevel::Statement(text) => {
+                if let Some(names) = at_rule_condition(text, "@layer") {
+                    for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                        register_layer(sheet, layer_path(&scope.layer, name));
+                    }
+                }
+                continue;
+            }
         };
         if !prelude.starts_with('@') {
             if let Some(mut rule) = parse_rule(prelude, body) {
-                rule.media = media.to_vec();
-                rules.push(rule);
+                rule.media = scope.media.clone();
+                rule.layer = scope.layer.clone();
+                sheet.rules.push(rule);
             }
             continue;
         }
-        if depth >= MAX_NESTING {
+        if scope.depth >= MAX_NESTING {
             continue;
         }
+        let mut nested = scope.nested();
         if let Some(condition) = at_rule_condition(prelude, "@media") {
-            let mut nested = media.to_vec();
-            nested.push(MediaList::parse(condition));
-            collect_rules(body, &nested, depth + 1, rules);
+            nested.media.push(MediaList::parse(condition));
+            collect_rules(body, &nested, sheet);
         } else if let Some(condition) = at_rule_condition(prelude, "@supports") {
             if supports::evaluate(condition) {
-                collect_rules(body, media, depth + 1, rules);
+                collect_rules(body, &nested, sheet);
             }
-        } else if at_rule_condition(prelude, "@layer").is_some() {
-            collect_rules(body, media, depth + 1, rules);
+        } else if let Some(name) = at_rule_condition(prelude, "@layer") {
+            let name = if name.is_empty() {
+                format!("(anonymous {})", sheet.layers.len())
+            } else {
+                name.to_string()
+            };
+            let path = layer_path(&scope.layer, &name);
+            register_layer(sheet, path.clone());
+            nested.layer = Some(path);
+            collect_rules(body, &nested, sheet);
         }
     }
 }
@@ -390,6 +446,7 @@ fn parse_rule(selector_text: &str, block: &str) -> Option<Rule> {
         selectors,
         declarations: parse_declarations(block),
         media: Vec::new(),
+        layer: None,
     })
 }
 

@@ -62,6 +62,7 @@ impl Page {
             visited: HashSet::new(),
             loaded: 0,
             rules: Vec::new(),
+            layers: Vec::new(),
             warnings: Vec::new(),
         };
         for style_source in style::style_sources(&document) {
@@ -102,7 +103,7 @@ impl Page {
         }
 
         Page {
-            stylesheet: style::with_author_rules(sheets.rules),
+            stylesheet: style::with_author_rules(sheets.rules, sheets.layers),
             document,
             font: text::default_font(),
             images,
@@ -138,6 +139,7 @@ struct Sheets {
     visited: HashSet<String>,
     loaded: usize,
     rules: Vec<Rule>,
+    layers: Vec<String>,
     warnings: Vec<String>,
 }
 
@@ -221,6 +223,11 @@ fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets
                     *url = location.to_string();
                 }
             }
+        }
+    }
+    for layer in parsed.layers {
+        if !sheets.layers.contains(&layer) {
+            sheets.layers.push(layer);
         }
     }
     sheets.rules.extend(parsed.rules);

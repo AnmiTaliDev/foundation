@@ -177,12 +177,20 @@ pub fn media_applies(media: &str) -> bool {
     false
 }
 
+const USER_AGENT_LAYER: &str = "(user-agent)";
+
 pub fn build_stylesheet(author_css: &str) -> Stylesheet {
-    with_author_rules(css::parse(author_css).rules)
+    let author = css::parse(author_css);
+    with_author_rules(author.rules, author.layers)
 }
 
-pub fn with_author_rules(rules: Vec<Rule>) -> Stylesheet {
+pub fn with_author_rules(rules: Vec<Rule>, layers: Vec<String>) -> Stylesheet {
     let mut stylesheet = css::parse(USER_AGENT_STYLESHEET);
+    for rule in &mut stylesheet.rules {
+        rule.layer = Some(USER_AGENT_LAYER.to_string());
+    }
+    stylesheet.layers = vec![USER_AGENT_LAYER.to_string()];
+    stylesheet.layers.extend(layers);
     stylesheet.rules.extend(rules);
     stylesheet
 }
@@ -355,7 +363,7 @@ fn specified_values(
     inherited: PropertyMap,
 ) -> PropertyMap {
     let viewport = context.viewport;
-    let mut matched: Vec<(Specificity, &Rule)> = Vec::new();
+    let mut matched: Vec<((usize, Specificity), &Rule)> = Vec::new();
     for rule in &context.stylesheet.rules {
         if !rule
             .media
@@ -365,7 +373,16 @@ fn specified_values(
             continue;
         }
         if let Some(specificity) = match_rule(element, ancestors, rule) {
-            matched.push((specificity, rule));
+            let rank = match &rule.layer {
+                Some(path) => context
+                    .stylesheet
+                    .layers
+                    .iter()
+                    .position(|layer| layer == path)
+                    .unwrap_or(usize::MAX),
+                None => usize::MAX,
+            };
+            matched.push(((rank, specificity), rule));
         }
     }
     matched.sort_by_key(|entry| entry.0);
