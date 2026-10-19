@@ -6,7 +6,7 @@ use crate::css::Color;
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
-use crate::style::TextAlign;
+use crate::style::{StyledNode, TextAlign};
 use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +19,32 @@ pub struct Run<'a> {
     pub families: &'a [String],
     pub bold: bool,
     pub italic: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockRun<'a> {
+    pub node: &'a StyledNode<'a>,
+    pub font_size: f32,
+}
+
+impl PartialEq for BlockRun<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.node, other.node)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockMetrics {
+    pub width: f32,
+    pub height: f32,
+    pub baseline: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacedBlock {
+    pub index: usize,
+    pub x: f32,
+    pub baseline: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +80,7 @@ impl InlineBoxStyle {
 pub enum InlineItem<'a> {
     Text(Run<'a>),
     Image(ImageRun),
+    Block(BlockRun<'a>),
     Open(Rc<InlineBoxStyle>),
     Close(usize),
 }
@@ -94,6 +121,7 @@ pub struct Lines {
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
     pub boxes: Vec<InlineBoxFragment>,
+    pub blocks: Vec<PlacedBlock>,
     pub height: f32,
 }
 
@@ -105,6 +133,11 @@ enum Piece<'a> {
         face: usize,
     },
     Image(&'a ImageRun),
+    Block {
+        run: &'a BlockRun<'a>,
+        metrics: &'a BlockMetrics,
+        index: usize,
+    },
 }
 
 struct Word<'a> {
@@ -133,13 +166,14 @@ impl Word<'_> {
         match &self.piece {
             Piece::Text { run, .. } => run.font_size,
             Piece::Image(image) => image.font_size,
+            Piece::Block { run, .. } => run.font_size,
         }
     }
 
     fn face(&self) -> usize {
         match &self.piece {
             Piece::Text { face, .. } => *face,
-            Piece::Image(_) => 0,
+            Piece::Image(_) | Piece::Block { .. } => 0,
         }
     }
 
@@ -155,12 +189,18 @@ impl Word<'_> {
         let content = match &self.piece {
             Piece::Text { text, run, face } => fonts.width(*face, text, run.font_size),
             Piece::Image(image) => image.width,
+            Piece::Block { metrics, .. } => metrics.width,
         };
         self.lead() + content + self.trail()
     }
 }
 
-fn collect_words<'a>(items: &'a [InlineItem<'a>], fonts: &Fonts) -> Vec<Word<'a>> {
+fn collect_words<'a>(
+    items: &'a [InlineItem<'a>],
+    fonts: &Fonts,
+    blocks: &'a [BlockMetrics],
+) -> Vec<Word<'a>> {
+    let mut block_index = 0;
     let mut words: Vec<Word<'a>> = Vec::new();
     let mut carry_space = false;
     let mut stack: Vec<Rc<InlineBoxStyle>> = Vec::new();
@@ -197,6 +237,22 @@ fn collect_words<'a>(items: &'a [InlineItem<'a>], fonts: &Fonts) -> Vec<Word<'a>
                     closes: Vec::new(),
                     stack: stack.clone(),
                 });
+                carry_space = false;
+            }
+            InlineItem::Block(run) => {
+                words.push(Word {
+                    piece: Piece::Block {
+                        run,
+                        metrics: &blocks[block_index],
+                        index: block_index,
+                    },
+                    space_before: carry_space,
+                    break_before: false,
+                    opens: std::mem::take(&mut pending),
+                    closes: Vec::new(),
+                    stack: stack.clone(),
+                });
+                block_index += 1;
                 carry_space = false;
             }
             InlineItem::Open(style) => {
@@ -277,8 +333,8 @@ fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a
     fitted
 }
 
-pub fn max_content_width(content: &InlineContent, fonts: &Fonts) -> f32 {
-    let words = collect_words(&content.items, fonts);
+pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
+    let words = collect_words(&content.items, fonts, blocks);
     let mut total = 0.0;
     for word in &words {
         if total > 0.0 && word.space_before {
@@ -296,8 +352,9 @@ pub fn layout_lines(
     origin_y: f32,
     fonts: &Fonts,
     floats: &FloatContext,
+    blocks: &[BlockMetrics],
 ) -> Lines {
-    let words = fit_words(collect_words(&content.items, fonts), width, fonts);
+    let words = fit_words(collect_words(&content.items, fonts, blocks), width, fonts);
     let mut lines = Lines::default();
     let mut line: Vec<PlacedWord> = Vec::new();
     let mut area = Area {
@@ -371,6 +428,10 @@ fn finish_line(
                 below = below.max(line_height - word_above);
             }
             Piece::Image(image) => above = above.max(image.height),
+            Piece::Block { metrics, .. } => {
+                above = above.max(metrics.baseline);
+                below = below.max(metrics.height - metrics.baseline);
+            }
         }
     }
 
@@ -403,6 +464,11 @@ fn finish_line(
                     face: *face,
                 });
             }
+            Piece::Block { index, .. } => lines.blocks.push(PlacedBlock {
+                index: *index,
+                x,
+                baseline,
+            }),
             Piece::Image(image) => {
                 if let Some(picture) = &image.picture {
                     lines.images.push(ImageFragment {

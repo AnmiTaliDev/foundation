@@ -8,8 +8,8 @@ use crate::text::Fonts;
 use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
 use crate::inline::{
-    self, Fragment, ImageFragment, ImageRun, InlineBoxFragment, InlineBoxStyle, InlineContent,
-    InlineItem, Run,
+    self, BlockMetrics, BlockRun, Fragment, ImageFragment, ImageRun, InlineBoxFragment,
+    InlineBoxStyle, InlineContent, InlineItem, Run,
 };
 use crate::picture::Picture;
 use crate::style::{
@@ -211,10 +211,14 @@ fn collect_child<'a>(
             flush_items(align, flow);
             flow.children.push(build_block_box(node, images));
         }
-        Display::Inline if floated => {
+        Display::Inline | Display::InlineBlock if floated => {
             flush_items(align, flow);
             flow.children.push(build_block_box(node, images));
         }
+        Display::InlineBlock => flow.items.push(InlineItem::Block(BlockRun {
+            node,
+            font_size: node.font_size(),
+        })),
         Display::Inline => match node.content {
             Content::Text(text) => flow.items.push(InlineItem::Text(Run {
                 text,
@@ -301,7 +305,7 @@ fn flush_items(align: TextAlign, flow: &mut Flow) {
                     has_content = true;
                 }
             }
-            InlineItem::Image(_) => has_content = true,
+            InlineItem::Image(_) | InlineItem::Block(_) => has_content = true,
             InlineItem::Open(_) | InlineItem::Close(_) => {}
         }
     }
@@ -441,12 +445,41 @@ impl<'a> LayoutBox<'a> {
                 area.x = containing.content.x;
                 area.y = containing.content.y + containing.content.height;
                 area.width = containing.content.width;
-                let lines =
-                    inline::layout_lines(content, area.width, area.x, area.y, fonts, floats);
-                area.height = lines.height;
+                let width = area.width;
+                let (x, y) = (area.x, area.y);
+                let mut blocks = layout_inline_blocks(content, width, fonts, images);
+                let metrics: Vec<BlockMetrics> = blocks.iter().map(|(_, m)| *m).collect();
+                let lines = inline::layout_lines(content, width, x, y, fonts, floats, &metrics);
+                self.dimensions.content.height = lines.height;
                 self.fragments = lines.fragments;
                 self.images = lines.images;
                 self.inline_boxes = lines.boxes;
+                for placed in lines.blocks {
+                    let (mut block, metrics) = std::mem::replace(
+                        &mut blocks[placed.index],
+                        (
+                            LayoutBox::new(
+                                BoxKind::Anonymous(InlineContent {
+                                    items: Vec::new(),
+                                    align: TextAlign::Left,
+                                }),
+                                Vec::new(),
+                            ),
+                            BlockMetrics {
+                                width: 0.0,
+                                height: 0.0,
+                                baseline: 0.0,
+                            },
+                        ),
+                    );
+                    let margin_box = block.dimensions.margin_box();
+                    block.translate(
+                        placed.x - margin_box.x,
+                        placed.baseline - metrics.baseline - margin_box.y,
+                    );
+                    block.apply_relative_offset(width);
+                    self.children.push(block);
+                }
             }
         }
     }
@@ -559,7 +592,10 @@ impl<'a> LayoutBox<'a> {
         for child in &mut self.children {
             let position = match &child.kind {
                 BoxKind::Block(style) => style.position(),
-                BoxKind::Anonymous(_) => continue,
+                BoxKind::Anonymous(_) => {
+                    child.layout_out_of_flow(area, fonts, images);
+                    continue;
+                }
             };
             match position {
                 Position::Absolute => child.layout_absolute(area, fonts, images),
@@ -573,7 +609,10 @@ impl<'a> LayoutBox<'a> {
         for child in &mut self.children {
             let position = match &child.kind {
                 BoxKind::Block(style) => style.position(),
-                BoxKind::Anonymous(_) => continue,
+                BoxKind::Anonymous(_) => {
+                    child.layout_fixed(window, fonts, images);
+                    continue;
+                }
             };
             if position == Position::Fixed {
                 child.layout_absolute(window, fonts, images);
@@ -770,7 +809,11 @@ impl<'a> LayoutBox<'a> {
 
     pub(crate) fn preferred_width(&self, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         match &self.kind {
-            BoxKind::Anonymous(content) => inline::max_content_width(content, fonts),
+            BoxKind::Anonymous(content) => {
+                let blocks = layout_inline_blocks(content, base, fonts, images);
+                let metrics: Vec<BlockMetrics> = blocks.iter().map(|(_, m)| *m).collect();
+                inline::max_content_width(content, fonts, &metrics)
+            }
             BoxKind::Block(style) => {
                 if let Some(replaced) = block_replaced(style, images, base) {
                     return replaced.width;
@@ -837,19 +880,13 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    fn layout_float(
-        &mut self,
-        side: Side,
-        parent: &Dimensions,
+    fn shrink_to_fit_width(
+        &self,
+        style: &StyledNode,
+        container: f32,
         fonts: &Fonts,
         images: &ImageMap,
-        floats: &mut FloatContext,
-    ) {
-        let BoxKind::Block(style) = &self.kind else {
-            return;
-        };
-        let style = *style;
-        let container = parent.content.width;
+    ) -> f32 {
         let replaced = block_replaced(style, images, container);
         let extras = horizontal_extras(style, container);
         let specified = match &replaced {
@@ -868,6 +905,23 @@ impl<'a> LayoutBox<'a> {
         if let Some(min) = style.length_or_auto("min-width", None, Some(container)) {
             width = width.max(min);
         }
+        width
+    }
+
+    fn layout_float(
+        &mut self,
+        side: Side,
+        parent: &Dimensions,
+        fonts: &Fonts,
+        images: &ImageMap,
+        floats: &mut FloatContext,
+    ) {
+        let BoxKind::Block(style) = &self.kind else {
+            return;
+        };
+        let style = *style;
+        let container = parent.content.width;
+        let width = self.shrink_to_fit_width(style, container, fonts, images);
         self.forced_width = Some(width);
 
         let mut origin = Dimensions::default();
@@ -1008,4 +1062,58 @@ impl<'a> LayoutBox<'a> {
             self.dimensions.content.height = height;
         }
     }
+}
+
+fn layout_inline_blocks<'a>(
+    content: &InlineContent<'a>,
+    available: f32,
+    fonts: &Fonts,
+    images: &ImageMap,
+) -> Vec<(LayoutBox<'a>, BlockMetrics)> {
+    let mut blocks = Vec::new();
+    for item in &content.items {
+        let InlineItem::Block(run) = item else {
+            continue;
+        };
+        let style = run.node;
+        let mut block = build_block_box(style, images);
+        block.forced_width = Some(block.shrink_to_fit_width(style, available, fonts, images));
+        let mut origin = Dimensions::default();
+        origin.content.width = available;
+        block.layout(&origin, fonts, images, &mut FloatContext::default());
+        let margin_box = block.dimensions.margin_box();
+        block.translate(-margin_box.x, -margin_box.y);
+        let height = margin_box.height;
+        let baseline = if style.establishes_clip() {
+            height
+        } else {
+            last_baseline(&block).unwrap_or(height)
+        };
+        blocks.push((
+            block,
+            BlockMetrics {
+                width: margin_box.width,
+                height,
+                baseline,
+            },
+        ));
+    }
+    blocks
+}
+
+fn last_baseline(layout_box: &LayoutBox) -> Option<f32> {
+    for child in layout_box.children.iter().rev() {
+        if let BoxKind::Block(style) = &child.kind {
+            if style.is_out_of_flow() || style.float().is_some() {
+                continue;
+            }
+        }
+        if let Some(baseline) = last_baseline(child) {
+            return Some(baseline);
+        }
+    }
+    layout_box
+        .fragments
+        .last()
+        .map(|fragment| fragment.baseline)
 }

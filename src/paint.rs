@@ -496,6 +496,7 @@ fn collect_positioned<'a, 'b>(
 ) {
     for child in children {
         let BoxKind::Block(style) = child.kind else {
+            collect_positioned(&child.children, fixed, out);
             continue;
         };
         if !style.is_positioned() {

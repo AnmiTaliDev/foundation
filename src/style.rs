@@ -49,6 +49,7 @@ pub enum Display {
     Block,
     Flex,
     Inline,
+    InlineBlock,
     None,
 }
 
@@ -537,6 +538,7 @@ impl<'a> StyledNode<'a> {
         match self.value("display") {
             Some(Value::Keyword(keyword)) if keyword == "none" => Display::None,
             Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
+            Some(Value::Keyword(keyword)) if keyword == "inline-block" => Display::InlineBlock,
             Some(Value::Keyword(keyword)) if keyword == "flex" || keyword == "inline-flex" => {
                 Display::Flex
             }
@@ -709,8 +711,19 @@ impl<'a> StyledNode<'a> {
         self.number("order", 0.0) as i32
     }
 
+    pub fn establishes_clip(&self) -> bool {
+        matches!(
+            self.value("overflow"),
+            Some(Value::Keyword(keyword))
+                if keyword == "hidden" || keyword == "auto" || keyword == "scroll"
+        )
+    }
+
     pub fn establishes_block_context(&self) -> bool {
-        if self.float().is_some() || self.is_out_of_flow() || self.display() == Display::Flex {
+        if self.float().is_some()
+            || self.is_out_of_flow()
+            || matches!(self.display(), Display::Flex | Display::InlineBlock)
+        {
             return true;
         }
         match self.value("overflow") {
