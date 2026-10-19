@@ -12,7 +12,8 @@ use crate::css::Color;
 use crate::inline::{Fragment, ImageFragment};
 use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
-use crate::style::{Content, Position};
+use crate::radius::{Radii, Round};
+use crate::style::{Content, Position, StyledNode};
 
 const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
@@ -37,9 +38,16 @@ pub enum DisplayCommand {
     Tiles(Tiles),
     GradientTiles(GradientTiles),
     BeginShift(f32),
-    BeginClip(Rect),
+    BeginClip(Clip),
+    BeginRound(Round),
     BeginGroup(Group),
     EndGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Clip {
+    pub rect: Rect,
+    pub radii: Radii,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -73,6 +81,7 @@ pub struct Canvas {
     pub height: usize,
     pub pixels: Vec<Color>,
     pub(crate) clip: (usize, usize, usize, usize),
+    rounds: Vec<Round>,
 }
 
 impl Canvas {
@@ -86,11 +95,37 @@ impl Canvas {
             height,
             pixels: vec![color; width * height],
             clip: (0, 0, width, height),
+            rounds: Vec::new(),
         }
     }
 
     pub fn pixel(&self, x: usize, y: usize) -> Color {
         self.pixels[y * self.width + x]
+    }
+
+    pub(crate) fn coverage(&self, x: usize, y: usize) -> f32 {
+        let mut coverage = 1.0;
+        for round in &self.rounds {
+            coverage *= round.coverage(x as f32 + 0.5, y as f32 + 0.5);
+        }
+        coverage
+    }
+
+    fn put(&mut self, x: usize, y: usize, color: Color, alpha: u8) {
+        let alpha = if self.rounds.is_empty() {
+            alpha
+        } else {
+            (f32::from(alpha) * self.coverage(x, y)).round() as u8
+        };
+        if alpha == 0 {
+            return;
+        }
+        let index = y * self.width + x;
+        self.pixels[index] = if alpha == 255 {
+            color
+        } else {
+            blend(self.pixels[index], color, alpha)
+        };
     }
 
     fn fill(&mut self, item: &SolidRect) {
@@ -112,12 +147,7 @@ impl Canvas {
             .round() as usize;
         for y in y0..y1 {
             for x in x0..x1 {
-                let index = y * self.width + x;
-                self.pixels[index] = if item.alpha == 255 {
-                    item.color
-                } else {
-                    blend(self.pixels[index], item.color, item.alpha)
-                };
+                self.put(x, y, item.color, item.alpha);
             }
         }
     }
@@ -144,8 +174,7 @@ impl Canvas {
                     {
                         continue;
                     }
-                    let index = y as usize * self.width + x as usize;
-                    self.pixels[index] = blend(self.pixels[index], fragment.color, coverage);
+                    self.put(x as usize, y as usize, fragment.color, coverage);
                 }
             }
             pen_x += fonts.advance(fragment.face, c, fragment.font_size);
@@ -184,8 +213,7 @@ impl Canvas {
                     g: picture.rgba[offset + 1],
                     b: picture.rgba[offset + 2],
                 };
-                let index = y * self.width + x;
-                self.pixels[index] = blend(self.pixels[index], color, alpha);
+                self.put(x, y, color, alpha);
             }
         }
     }
@@ -227,8 +255,7 @@ impl Canvas {
                 if alpha == 0 {
                     continue;
                 }
-                let index = y * self.width + x;
-                self.pixels[index] = blend(self.pixels[index], color, alpha);
+                self.put(x, y, color, alpha);
             }
         }
     }
@@ -283,8 +310,7 @@ impl Canvas {
                     g: picture.rgba[offset + 1],
                     b: picture.rgba[offset + 2],
                 };
-                let index = y * self.width + x;
-                self.pixels[index] = blend(self.pixels[index], color, alpha);
+                self.put(x, y, color, alpha);
             }
         }
     }
@@ -359,7 +385,8 @@ fn group_end(list: &[(DisplayCommand, bool)]) -> usize {
         match command {
             DisplayCommand::BeginGroup(_)
             | DisplayCommand::BeginShift(_)
-            | DisplayCommand::BeginClip(_) => depth += 1,
+            | DisplayCommand::BeginClip(_)
+            | DisplayCommand::BeginRound(_) => depth += 1,
             DisplayCommand::EndGroup => {
                 if depth == 0 {
                     return index;
@@ -438,7 +465,16 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                 run(&list[index..end], canvas, scroll_y - shift, fonts);
                 index = (end + 1).min(list.len());
             }
-            DisplayCommand::BeginClip(rect) => {
+            DisplayCommand::BeginRound(round) => {
+                let end = index + group_end(&list[index..]);
+                let mut shifted = *round;
+                shifted.rect.y -= offset;
+                canvas.rounds.push(shifted);
+                run(&list[index..end], canvas, scroll_y, fonts);
+                canvas.rounds.pop();
+                index = (end + 1).min(list.len());
+            }
+            DisplayCommand::BeginClip(Clip { rect, radii }) => {
                 let end = index + group_end(&list[index..]);
                 let saved = canvas.clip;
                 let x0 = (rect.x.round().max(0.0) as usize).clamp(saved.0, saved.2);
@@ -447,7 +483,20 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                 let y1 = (((rect.y + rect.height) - offset).round().max(0.0) as usize)
                     .clamp(y0, saved.3);
                 canvas.clip = (x0, y0, x1, y1);
+                let rounded = !radii.is_zero();
+                if rounded {
+                    let mut shifted = *rect;
+                    shifted.y -= offset;
+                    canvas.rounds.push(Round {
+                        rect: shifted,
+                        radii: *radii,
+                        inverted: false,
+                    });
+                }
                 run(&list[index..end], canvas, scroll_y, fonts);
+                if rounded {
+                    canvas.rounds.pop();
+                }
                 canvas.clip = saved;
                 index = (end + 1).min(list.len());
             }
@@ -492,7 +541,7 @@ struct Positioned<'a, 'b> {
     creates_context: bool,
     fixed: bool,
     layout_box: &'b LayoutBox<'a>,
-    clips: Vec<Rect>,
+    clips: Vec<Clip>,
 }
 
 fn is_positioned(layout_box: &LayoutBox) -> bool {
@@ -555,7 +604,7 @@ fn collect_positioned<'a, 'b>(
     children: &'b [LayoutBox<'a>],
     fixed: bool,
     container: Rect,
-    clips: &[(Rect, bool)],
+    clips: &[(Clip, bool)],
     out: &mut Vec<Positioned<'a, 'b>>,
 ) {
     for child in children {
@@ -566,8 +615,8 @@ fn collect_positioned<'a, 'b>(
         if !style.is_positioned() {
             if !style.has_effect() {
                 let mut inner = clips.to_vec();
-                if let Some(rect) = clip_of(child) {
-                    inner.push((rect, false));
+                if let Some(clip) = clip_of(child) {
+                    inner.push((clip, false));
                 }
                 collect_positioned(
                     &child.children,
@@ -583,14 +632,14 @@ fn collect_positioned<'a, 'b>(
         let z_index = style.z_index();
         let creates_context =
             z_index.is_some() || style.has_effect() || style.position() == Position::Sticky;
-        let applying: Vec<Rect> = match style.position() {
+        let applying: Vec<Clip> = match style.position() {
             Position::Fixed => Vec::new(),
             Position::Absolute => clips
                 .iter()
                 .filter(|(_, absolute)| *absolute)
-                .map(|(rect, _)| *rect)
+                .map(|(clip, _)| *clip)
                 .collect(),
-            _ => clips.iter().map(|(rect, _)| *rect).collect(),
+            _ => clips.iter().map(|(clip, _)| *clip).collect(),
         };
         out.push(Positioned {
             container,
@@ -601,10 +650,10 @@ fn collect_positioned<'a, 'b>(
             clips: applying,
         });
         if !creates_context {
-            let mut inner: Vec<(Rect, bool)> =
-                clips.iter().map(|(rect, _)| (*rect, true)).collect();
-            if let Some(rect) = clip_of(child) {
-                inner.push((rect, true));
+            let mut inner: Vec<(Clip, bool)> =
+                clips.iter().map(|(clip, _)| (*clip, true)).collect();
+            if let Some(clip) = clip_of(child) {
+                inner.push((clip, true));
             }
             collect_positioned(
                 &child.children,
@@ -642,8 +691,8 @@ fn paint_flow(
 }
 
 fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
-    for rect in &item.clips {
-        begin_clip(list, item.fixed, Some(*rect));
+    for clip in &item.clips {
+        begin_clip(list, item.fixed, Some(*clip));
     }
     if item.creates_context {
         paint_stacking(item.layout_box, item.fixed, item.container, view, list);
@@ -661,12 +710,12 @@ fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
         );
         end_clip(list, item.fixed, clip);
     }
-    for rect in &item.clips {
-        end_clip(list, item.fixed, Some(*rect));
+    for clip in &item.clips {
+        end_clip(list, item.fixed, Some(*clip));
     }
 }
 
-fn clip_of(layout_box: &LayoutBox) -> Option<Rect> {
+fn clip_of(layout_box: &LayoutBox) -> Option<Clip> {
     let BoxKind::Block(style) = layout_box.kind else {
         return None;
     };
@@ -677,16 +726,24 @@ fn clip_of(layout_box: &LayoutBox) -> Option<Rect> {
     if is_root || !style.establishes_clip() {
         return None;
     }
-    Some(layout_box.dimensions.padding_box())
+    let d = &layout_box.dimensions;
+    let border_box = d.border_box();
+    let radii = style
+        .border_radii(border_box.width, border_box.height)
+        .shrink([d.border.top, d.border.right, d.border.bottom, d.border.left]);
+    Some(Clip {
+        rect: d.padding_box(),
+        radii,
+    })
 }
 
-fn begin_clip(list: &mut DisplayList, fixed: bool, clip: Option<Rect>) {
+fn begin_clip(list: &mut DisplayList, fixed: bool, clip: Option<Clip>) {
     if let Some(rect) = clip {
         list.push((DisplayCommand::BeginClip(rect), fixed));
     }
 }
 
-fn end_clip(list: &mut DisplayList, fixed: bool, clip: Option<Rect>) {
+fn end_clip(list: &mut DisplayList, fixed: bool, clip: Option<Clip>) {
     if clip.is_some() {
         list.push((DisplayCommand::EndGroup, fixed));
     }
@@ -787,10 +844,30 @@ fn paint_stacking_contents(
     end_clip(list, fixed, clip);
 }
 
+fn box_radii(layout_box: &LayoutBox, style: &StyledNode) -> Radii {
+    let border_box = layout_box.dimensions.border_box();
+    style.border_radii(border_box.width, border_box.height)
+}
+
 fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
+    let radii = box_radii(layout_box, style);
+    if radii.is_zero() {
+        push_background(layout_box, style, list);
+        return;
+    }
+    list.push(DisplayCommand::BeginRound(Round {
+        rect: layout_box.dimensions.border_box(),
+        radii,
+        inverted: false,
+    }));
+    push_background(layout_box, style, list);
+    list.push(DisplayCommand::EndGroup);
+}
+
+fn push_background(layout_box: &LayoutBox, style: &StyledNode, list: &mut Vec<DisplayCommand>) {
     if let Some(Rgba { color, alpha }) = style.rgba("background-color") {
         if alpha > 0 {
             list.push(DisplayCommand::Rect(SolidRect {
@@ -887,6 +964,30 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     };
     let d = &layout_box.dimensions;
     let widths = [d.border.top, d.border.right, d.border.bottom, d.border.left];
+    let radii = box_radii(layout_box, style);
+    if !radii.is_zero() {
+        if widths.iter().all(|width| *width <= 0.0) {
+            return;
+        }
+        list.push(DisplayCommand::BeginRound(Round {
+            rect: d.border_box(),
+            radii,
+            inverted: false,
+        }));
+        list.push(DisplayCommand::BeginRound(Round {
+            rect: d.padding_box(),
+            radii: radii.shrink(widths),
+            inverted: true,
+        }));
+        list.push(DisplayCommand::Rect(SolidRect {
+            color,
+            alpha,
+            rect: d.border_box(),
+        }));
+        list.push(DisplayCommand::EndGroup);
+        list.push(DisplayCommand::EndGroup);
+        return;
+    }
     for rect in border_edges(&d.border_box(), widths) {
         list.push(DisplayCommand::Rect(SolidRect { color, alpha, rect }));
     }

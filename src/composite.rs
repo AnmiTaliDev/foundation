@@ -92,7 +92,7 @@ pub(crate) fn draw_layer(
             if alpha < 0.004 {
                 continue;
             }
-            let weight = alpha.min(1.0) * opacity;
+            let weight = alpha.min(1.0) * opacity * destination.coverage(x, y);
             let index = y * destination.width + x;
             let before = destination.pixels[index];
             let channel =

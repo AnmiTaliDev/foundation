@@ -10,6 +10,7 @@ use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
+use crate::radius::Radii;
 use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -786,6 +787,24 @@ impl<'a> StyledNode<'a> {
 
     pub fn order(&self) -> i32 {
         self.number("order", 0.0) as i32
+    }
+
+    pub fn border_radii(&self, width: f32, height: f32) -> Radii {
+        let corner = |name: &str| {
+            (
+                self.px(&format!("{}-x", name), width),
+                self.px(&format!("{}-y", name), height),
+            )
+        };
+        Radii {
+            corners: [
+                corner("border-top-left-radius"),
+                corner("border-top-right-radius"),
+                corner("border-bottom-right-radius"),
+                corner("border-bottom-left-radius"),
+            ],
+        }
+        .fit(width, height)
     }
 
     pub fn establishes_clip(&self) -> bool {

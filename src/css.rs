@@ -753,6 +753,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "gap" {
         return expand_gap(value);
     }
+    if let Some(declarations) = expand_radius(&name, value) {
+        return declarations;
+    }
     if name == "overflow" {
         return expand_overflow(value);
     }
@@ -1372,6 +1375,86 @@ fn expand_flex_flow(text: &str) -> Vec<Declaration> {
         }
     }
     declarations
+}
+
+const CORNERS: [&str; 4] = [
+    "border-top-left-radius",
+    "border-top-right-radius",
+    "border-bottom-right-radius",
+    "border-bottom-left-radius",
+];
+
+fn radius_values(text: &str) -> Option<Vec<Value>> {
+    let mut values = Vec::new();
+    for token in split_values(text) {
+        match parse_value(token) {
+            Some(
+                value @ (Value::Length(_)
+                | Value::Em(_)
+                | Value::Percent(_)
+                | Value::Rem(_)
+                | Value::Vw(_)
+                | Value::Vh(_)
+                | Value::Vmin(_)
+                | Value::Vmax(_)
+                | Value::Calc(_)),
+            ) => values.push(value),
+            _ => return None,
+        }
+    }
+    if values.is_empty() || values.len() > 4 {
+        return None;
+    }
+    Some(values)
+}
+
+fn corner_values(values: &[Value]) -> [Value; 4] {
+    let pick = |index: usize| values[index].clone();
+    match values.len() {
+        1 => [pick(0), pick(0), pick(0), pick(0)],
+        2 => [pick(0), pick(1), pick(0), pick(1)],
+        3 => [pick(0), pick(1), pick(2), pick(1)],
+        _ => [pick(0), pick(1), pick(2), pick(3)],
+    }
+}
+
+fn expand_radius(name: &str, value: &str) -> Option<Vec<Declaration>> {
+    let mut declarations = Vec::new();
+    if name == "border-radius" {
+        let (horizontal, vertical) = match value.split_once('/') {
+            Some((horizontal, vertical)) => (horizontal, vertical),
+            None => (value, value),
+        };
+        let (Some(horizontal), Some(vertical)) =
+            (radius_values(horizontal), radius_values(vertical))
+        else {
+            return Some(Vec::new());
+        };
+        let horizontal = corner_values(&horizontal);
+        let vertical = corner_values(&vertical);
+        for (index, corner) in CORNERS.iter().enumerate() {
+            declarations.push(declaration(
+                &format!("{}-x", corner),
+                horizontal[index].clone(),
+            ));
+            declarations.push(declaration(
+                &format!("{}-y", corner),
+                vertical[index].clone(),
+            ));
+        }
+        return Some(declarations);
+    }
+    if CORNERS.contains(&name) {
+        let values = match radius_values(value) {
+            Some(values) if values.len() <= 2 => values,
+            _ => return Some(Vec::new()),
+        };
+        let vertical = values.get(1).unwrap_or(&values[0]).clone();
+        declarations.push(declaration(&format!("{}-x", name), values[0].clone()));
+        declarations.push(declaration(&format!("{}-y", name), vertical));
+        return Some(declarations);
+    }
+    None
 }
 
 fn expand_overflow(text: &str) -> Vec<Declaration> {
