@@ -77,7 +77,10 @@ const PROPERTIES: [&str; 71] = [
     "font",
 ];
 
-const DISPLAYS: [&str; 7] = [
+const DISPLAYS: [&str; 10] = [
+    "grid",
+    "inline-grid",
+    "table",
     "block",
     "inline",
     "flex",

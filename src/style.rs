@@ -9,6 +9,7 @@ use crate::css::{
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
 use crate::gradient::Gradient;
+use crate::gridspec::{Line, TrackList};
 use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -70,6 +71,7 @@ pub enum Display {
     TableRowGroup,
     TableRow,
     TableCell,
+    Grid,
     None,
 }
 
@@ -561,6 +563,9 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
             Some(Value::Keyword(keyword)) if keyword == "inline-block" => Display::InlineBlock,
             Some(Value::Keyword(keyword)) if keyword == "list-item" => Display::ListItem,
+            Some(Value::Keyword(keyword)) if keyword == "grid" || keyword == "inline-grid" => {
+                Display::Grid
+            }
             Some(Value::Keyword(keyword)) if keyword == "table" => Display::Table,
             Some(Value::Keyword(keyword))
                 if matches!(
@@ -758,7 +763,11 @@ impl<'a> StyledNode<'a> {
             || self.is_out_of_flow()
             || matches!(
                 self.display(),
-                Display::Flex | Display::InlineBlock | Display::Table | Display::TableCell
+                Display::Flex
+                    | Display::Grid
+                    | Display::InlineBlock
+                    | Display::Table
+                    | Display::TableCell
             )
         {
             return true;
@@ -808,6 +817,58 @@ impl<'a> StyledNode<'a> {
 
     pub fn has_effect(&self) -> bool {
         self.opacity() < 1.0 || matches!(self.value("transform"), Some(Value::Transform(_)))
+    }
+
+    pub fn grid_tracks(&self, name: &str) -> Option<&TrackList> {
+        match self.value(name) {
+            Some(Value::Tracks(tracks)) => Some(tracks),
+            _ => None,
+        }
+    }
+
+    pub fn grid_areas(&self) -> Option<&Vec<Vec<String>>> {
+        match self.value("grid-template-areas") {
+            Some(Value::Areas(areas)) => Some(areas),
+            _ => None,
+        }
+    }
+
+    pub fn grid_line(&self, name: &str) -> Line {
+        match self.value(name) {
+            Some(Value::GridLine(line)) => line.clone(),
+            _ => Line::Auto,
+        }
+    }
+
+    pub fn grid_flow_column(&self) -> bool {
+        self.keyword("grid-auto-flow") == Some("column")
+    }
+
+    pub fn grid_dense(&self) -> bool {
+        self.keyword("grid-auto-dense") == Some("dense")
+    }
+
+    pub fn justify_items(&self) -> Align {
+        match self.keyword("justify-items") {
+            Some(keyword) => StyledNode::align_keyword(keyword).unwrap_or(Align::Stretch),
+            None => Align::Stretch,
+        }
+    }
+
+    pub fn justify_self(&self) -> Option<Align> {
+        StyledNode::align_keyword(self.keyword("justify-self")?)
+    }
+
+    pub fn content_distribution(&self, name: &str) -> Option<Justify> {
+        match self.keyword(name)? {
+            "start" | "flex-start" | "left" => Some(Justify::Start),
+            "end" | "flex-end" | "right" => Some(Justify::End),
+            "center" => Some(Justify::Center),
+            "space-between" => Some(Justify::SpaceBetween),
+            "space-around" => Some(Justify::SpaceAround),
+            "space-evenly" => Some(Justify::SpaceEvenly),
+            _ => None,
+        }
     }
 
     pub fn vertical_align(&self) -> Option<&str> {

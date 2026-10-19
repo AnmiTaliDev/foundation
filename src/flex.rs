@@ -99,7 +99,7 @@ impl Item {
     }
 }
 
-fn distribute(kind: Justify, free: f32, count: usize) -> (f32, f32) {
+pub(crate) fn distribute(kind: Justify, free: f32, count: usize) -> (f32, f32) {
     let n = count as f32;
     match kind {
         Justify::Start | Justify::Stretch => (0.0, 0.0),

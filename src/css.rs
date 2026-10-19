@@ -3,6 +3,7 @@
 use crate::calc::{self, Linear};
 use crate::color::{self, Rgba};
 use crate::gradient::{self, Gradient};
+use crate::gridspec::{self, Line, TrackList};
 use crate::media::MediaList;
 use crate::supports;
 use crate::transform::{self, Function};
@@ -72,6 +73,9 @@ pub enum Value {
     Transform(Vec<Function>),
     Rgba(Color, u8),
     Gradient(Gradient),
+    Tracks(TrackList),
+    GridLine(Line),
+    Areas(Vec<Vec<String>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -723,7 +727,12 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     let Some((name, value)) = item.split_once(':') else {
         return Vec::new();
     };
-    let name = name.trim().to_ascii_lowercase();
+    let name = match name.trim().to_ascii_lowercase().as_str() {
+        "grid-gap" => "gap".to_string(),
+        "grid-row-gap" => "row-gap".to_string(),
+        "grid-column-gap" => "column-gap".to_string(),
+        other => other.to_string(),
+    };
     if name.is_empty() {
         return Vec::new();
     }
@@ -784,6 +793,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
                 .map(|value| vec![Declaration { name, value }])
                 .unwrap_or_default(),
         };
+    }
+    if let Some(declarations) = expand_grid(&name, value) {
+        return declarations;
     }
     if name == "border-spacing" {
         let lengths: Vec<Value> = split_values(value)
@@ -1165,6 +1177,122 @@ fn declaration(name: &str, value: Value) -> Declaration {
         name: name.to_string(),
         value,
     }
+}
+
+fn expand_grid(name: &str, value: &str) -> Option<Vec<Declaration>> {
+    let single = |name: &str, value: Value| vec![declaration(name, value)];
+    let result = match name {
+        "grid-template-columns" | "grid-template-rows" | "grid-auto-columns" | "grid-auto-rows" => {
+            match gridspec::parse_tracks(value) {
+                Some(tracks) => single(name, Value::Tracks(tracks)),
+                None if value.eq_ignore_ascii_case("none") => {
+                    single(name, Value::Keyword("none".to_string()))
+                }
+                None => Vec::new(),
+            }
+        }
+        "grid-template-areas" => match gridspec::parse_areas(value) {
+            Some(areas) => single(name, Value::Areas(areas)),
+            None => Vec::new(),
+        },
+        "grid-column-start" | "grid-column-end" | "grid-row-start" | "grid-row-end" => {
+            match gridspec::parse_line(value) {
+                Some(line) => single(name, Value::GridLine(line)),
+                None => Vec::new(),
+            }
+        }
+        "grid-column" | "grid-row" => expand_line_pair(name, value),
+        "grid-area" => expand_area(value),
+        "grid-auto-flow" => {
+            let lower = value.to_ascii_lowercase();
+            let words: Vec<&str> = lower.split_whitespace().collect();
+            let mut declarations = Vec::new();
+            let flow = if words.contains(&"column") {
+                "column"
+            } else {
+                "row"
+            };
+            if words
+                .iter()
+                .all(|w| matches!(*w, "row" | "column" | "dense"))
+                && !words.is_empty()
+            {
+                declarations.push(declaration(name, Value::Keyword(flow.to_string())));
+                if words.contains(&"dense") {
+                    declarations.push(declaration(
+                        "grid-auto-dense",
+                        Value::Keyword("dense".to_string()),
+                    ));
+                }
+            }
+            declarations
+        }
+        "place-items" | "place-self" | "place-content" => {
+            let base = &name["place-".len()..];
+            let words: Vec<&str> = value.split_whitespace().collect();
+            let (align, justify) = match words.as_slice() {
+                [one] => (*one, *one),
+                [first, second] => (*first, *second),
+                _ => return Some(Vec::new()),
+            };
+            vec![
+                declaration(
+                    &format!("align-{}", base),
+                    Value::Keyword(align.to_ascii_lowercase()),
+                ),
+                declaration(
+                    &format!("justify-{}", base),
+                    Value::Keyword(justify.to_ascii_lowercase()),
+                ),
+            ]
+        }
+        _ => return None,
+    };
+    Some(result)
+}
+
+fn expand_line_pair(name: &str, value: &str) -> Vec<Declaration> {
+    let parts: Vec<&str> = value.split('/').map(str::trim).collect();
+    let (start, end) = match parts.as_slice() {
+        [one] => match gridspec::parse_line(one) {
+            Some(Line::Area(name)) => (Line::Area(name.clone()), Line::Area(name)),
+            Some(line) => (line, Line::Auto),
+            None => return Vec::new(),
+        },
+        [first, second] => match (gridspec::parse_line(first), gridspec::parse_line(second)) {
+            (Some(start), Some(end)) => (start, end),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    vec![
+        declaration(&format!("{}-start", name), Value::GridLine(start)),
+        declaration(&format!("{}-end", name), Value::GridLine(end)),
+    ]
+}
+
+fn expand_area(value: &str) -> Vec<Declaration> {
+    let lines: Option<Vec<Line>> = value.split('/').map(gridspec::parse_line).collect();
+    let Some(lines) = lines else {
+        return Vec::new();
+    };
+    let get = |index: usize| lines.get(index).cloned().unwrap_or(Line::Auto);
+    let (row_start, column_start, row_end, column_end) = match lines.as_slice() {
+        [Line::Area(name)] => (
+            Line::Area(name.clone()),
+            Line::Area(name.clone()),
+            Line::Area(name.clone()),
+            Line::Area(name.clone()),
+        ),
+        [_] | [_, _] | [_, _, _] | [_, _, _, _] => (get(0), get(1), get(2), get(3)),
+        _ => return Vec::new(),
+    };
+    vec![
+        declaration("grid-row-start", Value::GridLine(row_start)),
+        declaration("grid-column-start", Value::GridLine(column_start)),
+        declaration("grid-row-end", Value::GridLine(row_end)),
+        declaration("grid-column-end", Value::GridLine(column_end)),
+    ]
 }
 
 fn expand_flex(text: &str) -> Vec<Declaration> {

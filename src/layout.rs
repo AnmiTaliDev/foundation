@@ -174,7 +174,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         counter: list_start(style),
     };
     let align = style.text_align();
-    let blockify = style.display() == Display::Flex;
+    let blockify = matches!(style.display(), Display::Flex | Display::Grid);
     for child in &style.children {
         collect_child(child, align, blockify, images, &mut flow);
     }
@@ -240,7 +240,8 @@ fn collect_child<'a>(
         | Display::Table
         | Display::TableRowGroup
         | Display::TableRow
-        | Display::TableCell => {
+        | Display::TableCell
+        | Display::Grid => {
             flush_items(align, flow);
             flow.children.push(build_block_box(node, images));
         }
@@ -479,6 +480,8 @@ impl<'a> LayoutBox<'a> {
                     self.layout_flex_children(style, fonts, images);
                 } else if table {
                     self.layout_table_children(style, fonts, images);
+                } else if style.display() == Display::Grid {
+                    self.layout_grid_children(style, fonts, images);
                 } else if self.is_formatting_root(style) {
                     let mut own = FloatContext::default();
                     self.layout_children(fonts, images, &mut own);
@@ -949,6 +952,9 @@ impl<'a> LayoutBox<'a> {
                 }
                 if style.display() == Display::Table {
                     return self.table_intrinsic_width(style, mode, fonts, images, base);
+                }
+                if style.display() == Display::Grid {
+                    return self.grid_intrinsic_width(style, mode, fonts, images, base);
                 }
                 let mut widest: f32 = 0.0;
                 for child in &self.children {

@@ -6,11 +6,12 @@ use foundation::supports::evaluate;
 #[test]
 fn declarations_are_tested_against_what_the_engine_implements() {
     assert!(evaluate("(display: flex)"));
+    assert!(evaluate("(display: grid)"));
     assert!(evaluate("(position: absolute)"));
     assert!(evaluate("(width: calc(100% - 10px))"));
     assert!(evaluate("(gap: 4px)"));
     assert!(evaluate("(background: url(a.png) no-repeat)"));
-    assert!(!evaluate("(display: grid)"));
+    assert!(!evaluate("(display: contents)"));
     assert!(evaluate("(position: sticky)"));
     assert!(!evaluate("(position: static-ish)"));
     assert!(evaluate("(transform: rotate(1deg))"));
@@ -24,12 +25,12 @@ fn declarations_are_tested_against_what_the_engine_implements() {
 #[test]
 fn conditions_combine() {
     assert!(evaluate("(display: flex) and (gap: 4px)"));
-    assert!(!evaluate("(display: flex) and (display: grid)"));
-    assert!(evaluate("(display: grid) or (display: flex)"));
-    assert!(evaluate("not (display: grid)"));
+    assert!(!evaluate("(display: flex) and (display: contents)"));
+    assert!(evaluate("(display: contents) or (display: flex)"));
+    assert!(evaluate("not (display: contents)"));
     assert!(!evaluate("not (display: flex)"));
     assert!(evaluate("((display: flex) and (gap: 4px))"));
-    assert!(evaluate("(not (display: grid))"));
+    assert!(evaluate("(not (display: contents))"));
     assert!(!evaluate("selector(a > b)"));
     assert!(!evaluate(""));
     assert!(!evaluate("display: flex"));
@@ -46,7 +47,7 @@ fn tags(source: &str) -> Vec<String> {
 #[test]
 fn supports_blocks_keep_or_drop_their_rules() {
     assert_eq!(
-        tags("a { x: 1px } @supports (display: flex) { b { x: 1px } } @supports (display: grid) { c { x: 1px } } @supports not (display: grid) { d { x: 1px } } e { x: 1px }"),
+        tags("a { x: 1px } @supports (display: flex) { b { x: 1px } } @supports (display: contents) { c { x: 1px } } @supports not (display: contents) { d { x: 1px } } e { x: 1px }"),
         ["a", "b", "d", "e"]
     );
 }
