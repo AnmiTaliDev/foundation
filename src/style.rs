@@ -19,13 +19,21 @@ pub const USER_AGENT_STYLESHEET: &str =
     p, h1, h2, h3 { margin-bottom: 12px; } \
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
     i, em, cite, var, address { font-style: italic; } \
-    code, kbd, samp, pre, tt { font-family: monospace; }";
+    code, kbd, samp, pre, tt { font-family: monospace; } \
+    ul, ol { margin-top: 16px; margin-bottom: 16px; padding-left: 40px; } \
+    ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; } \
+    li { display: list-item; } \
+    ul { list-style-type: disc; } ol { list-style-type: decimal; } \
+    ul ul, ol ul { list-style-type: circle; } \
+    ul ul ul, ol ul ul, ul ol ul, ol ol ul { list-style-type: square; } \
+    ul ol, ol ol { list-style-type: decimal; }";
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 7] = [
+const INHERITED_PROPERTIES: [&str; 8] = [
+    "list-style-type",
     "color",
     "font-size",
     "text-align",
@@ -50,6 +58,7 @@ pub enum Display {
     Flex,
     Inline,
     InlineBlock,
+    ListItem,
     None,
 }
 
@@ -540,6 +549,7 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "none" => Display::None,
             Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
             Some(Value::Keyword(keyword)) if keyword == "inline-block" => Display::InlineBlock,
+            Some(Value::Keyword(keyword)) if keyword == "list-item" => Display::ListItem,
             Some(Value::Keyword(keyword)) if keyword == "flex" || keyword == "inline-flex" => {
                 Display::Flex
             }
@@ -773,6 +783,10 @@ impl<'a> StyledNode<'a> {
 
     pub fn has_effect(&self) -> bool {
         self.opacity() < 1.0 || matches!(self.value("transform"), Some(Value::Transform(_)))
+    }
+
+    pub fn list_style_type(&self) -> &str {
+        self.keyword("list-style-type").unwrap_or("disc")
     }
 
     pub fn font_families(&self) -> &[String] {

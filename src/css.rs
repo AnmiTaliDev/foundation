@@ -785,6 +785,19 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
                 .unwrap_or_default(),
         };
     }
+    if name == "list-style" {
+        return split_values(value)
+            .into_iter()
+            .map(str::to_ascii_lowercase)
+            .find(|token| crate::list::is_type(token))
+            .map(|kind| {
+                vec![Declaration {
+                    name: "list-style-type".to_string(),
+                    value: Value::Keyword(kind),
+                }]
+            })
+            .unwrap_or_default();
+    }
     if name == "background-position" {
         return expand_position(&split_values(value), "background-position");
     }

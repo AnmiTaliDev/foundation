@@ -13,8 +13,11 @@ fn declarations_are_tested_against_what_the_engine_implements() {
     assert!(!evaluate("(display: grid)"));
     assert!(evaluate("(position: sticky)"));
     assert!(!evaluate("(position: static-ish)"));
-    assert!(!evaluate("(transform: rotate(1deg))"));
-    assert!(!evaluate("(opacity: 0.5)"));
+    assert!(evaluate("(transform: rotate(1deg))"));
+    assert!(evaluate("(opacity: 0.5)"));
+    assert!(evaluate("(font-family: serif)"));
+    assert!(!evaluate("(backdrop-filter: blur(2px))"));
+    assert!(!evaluate("(transform: rotate(foo))"));
     assert!(!evaluate("(width: ???)"));
 }
 

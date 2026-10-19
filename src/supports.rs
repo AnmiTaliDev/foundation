@@ -3,7 +3,16 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 62] = [
+const PROPERTIES: [&str; 71] = [
+    "opacity",
+    "transform-origin-x",
+    "transform-origin-y",
+    "font-family",
+    "font-weight",
+    "font-style",
+    "list-style",
+    "list-style-type",
+    "transform",
     "align-content",
     "align-items",
     "align-self",
@@ -68,7 +77,15 @@ const PROPERTIES: [&str; 62] = [
     "font",
 ];
 
-const DISPLAYS: [&str; 5] = ["block", "inline", "flex", "inline-flex", "none"];
+const DISPLAYS: [&str; 7] = [
+    "block",
+    "inline",
+    "flex",
+    "inline-flex",
+    "inline-block",
+    "list-item",
+    "none",
+];
 const POSITIONS: [&str; 5] = ["static", "relative", "absolute", "fixed", "sticky"];
 
 pub fn evaluate(condition: &str) -> bool {

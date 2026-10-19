@@ -11,6 +11,7 @@ use crate::inline::{
     self, BlockMetrics, BlockRun, Fragment, ImageFragment, ImageRun, InlineBoxFragment,
     InlineBoxStyle, InlineContent, InlineItem, Run,
 };
+use crate::list;
 use crate::picture::Picture;
 use crate::style::{
     Clear, Content, Display, FlexDirection, Position, StyledNode, TextAlign, Viewport,
@@ -57,6 +58,7 @@ pub struct LayoutBox<'a> {
     pub images: Vec<ImageFragment>,
     pub inline_boxes: Vec<InlineBoxFragment>,
     pub background_picture: Option<Rc<Picture>>,
+    pub(crate) marker: Option<String>,
     pub(crate) forced_width: Option<f32>,
     pub(crate) forced_height: Option<f32>,
     pub(crate) static_position: Option<(f32, f32)>,
@@ -125,6 +127,7 @@ impl<'a> LayoutBox<'a> {
             images: Vec::new(),
             inline_boxes: Vec::new(),
             background_picture: None,
+            marker: None,
             forced_width: None,
             forced_height: None,
             static_position: None,
@@ -137,6 +140,21 @@ struct Flow<'a> {
     children: Vec<LayoutBox<'a>>,
     items: Vec<InlineItem<'a>>,
     next_box_id: usize,
+    counter: i32,
+}
+
+fn list_start(style: &StyledNode) -> i32 {
+    let Content::Element(element) = style.content else {
+        return 1;
+    };
+    if element.tag_name != "ol" {
+        return 1;
+    }
+    element
+        .attributes
+        .get("start")
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(1)
 }
 
 fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBox<'a> {
@@ -144,6 +162,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         children: Vec::new(),
         items: Vec::new(),
         next_box_id: 0,
+        counter: list_start(style),
     };
     let align = style.text_align();
     let blockify = style.display() == Display::Flex;
@@ -210,6 +229,21 @@ fn collect_child<'a>(
         Display::Block | Display::Flex => {
             flush_items(align, flow);
             flow.children.push(build_block_box(node, images));
+        }
+        Display::ListItem => {
+            flush_items(align, flow);
+            let mut item = build_block_box(node, images);
+            let value = match node.content {
+                Content::Element(element) => element
+                    .attributes
+                    .get("value")
+                    .and_then(|value| value.trim().parse().ok()),
+                Content::Text(_) => None,
+            }
+            .unwrap_or(flow.counter);
+            flow.counter = value.saturating_add(1);
+            item.marker = list::marker_text(node.list_style_type(), value);
+            flow.children.push(item);
         }
         Display::Inline | Display::InlineBlock if floated => {
             flush_items(align, flow);
@@ -432,6 +466,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 self.collapse_bottom_margin(style);
                 self.calculate_height(style, replaced.as_ref());
+                self.place_marker(style, fonts);
                 if let Some(replaced) = replaced {
                     self.place_picture(replaced.picture);
                 }
@@ -880,6 +915,32 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
+    fn place_marker(&mut self, style: &StyledNode, fonts: &Fonts) {
+        self.fragments.clear();
+        let Some(text) = &self.marker else {
+            return;
+        };
+        let size = style.font_size();
+        let face = fonts.select(
+            style.font_families(),
+            style.font_bold(),
+            style.font_italic(),
+        );
+        let baseline =
+            first_baseline(self).unwrap_or(self.dimensions.content.y + fonts.ascent(face, size));
+        let width = fonts.width(face, text, size);
+        let fragment = Fragment {
+            x: self.dimensions.content.x - width,
+            baseline,
+            text: text.clone(),
+            color: style.text_color(),
+            alpha: style.text_alpha(),
+            font_size: size,
+            face,
+        };
+        self.fragments.push(fragment);
+    }
+
     fn shrink_to_fit_width(
         &self,
         style: &StyledNode,
@@ -1116,4 +1177,21 @@ fn last_baseline(layout_box: &LayoutBox) -> Option<f32> {
         .fragments
         .last()
         .map(|fragment| fragment.baseline)
+}
+
+fn first_baseline(layout_box: &LayoutBox) -> Option<f32> {
+    if let Some(fragment) = layout_box.fragments.first() {
+        return Some(fragment.baseline);
+    }
+    for child in &layout_box.children {
+        if let BoxKind::Block(style) = &child.kind {
+            if style.is_out_of_flow() || style.float().is_some() {
+                continue;
+            }
+        }
+        if let Some(baseline) = first_baseline(child) {
+            return Some(baseline);
+        }
+    }
+    None
 }

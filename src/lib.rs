@@ -12,6 +12,7 @@ pub mod gradient;
 pub mod html;
 pub mod inline;
 pub mod layout;
+pub mod list;
 pub mod loader;
 pub mod location;
 pub mod media;
