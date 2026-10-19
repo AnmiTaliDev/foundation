@@ -11,7 +11,8 @@ fn declarations_are_tested_against_what_the_engine_implements() {
     assert!(evaluate("(gap: 4px)"));
     assert!(evaluate("(background: url(a.png) no-repeat)"));
     assert!(!evaluate("(display: grid)"));
-    assert!(!evaluate("(position: sticky)"));
+    assert!(evaluate("(position: sticky)"));
+    assert!(!evaluate("(position: static-ish)"));
     assert!(!evaluate("(transform: rotate(1deg))"));
     assert!(!evaluate("(opacity: 0.5)"));
     assert!(!evaluate("(width: ???)"));

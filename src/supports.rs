@@ -69,7 +69,7 @@ const PROPERTIES: [&str; 62] = [
 ];
 
 const DISPLAYS: [&str; 5] = ["block", "inline", "flex", "inline-flex", "none"];
-const POSITIONS: [&str; 4] = ["static", "relative", "absolute", "fixed"];
+const POSITIONS: [&str; 5] = ["static", "relative", "absolute", "fixed", "sticky"];
 
 pub fn evaluate(condition: &str) -> bool {
     let terms = split_terms(condition.trim());

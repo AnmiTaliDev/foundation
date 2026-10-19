@@ -36,6 +36,7 @@ pub enum DisplayCommand {
     Image(ImageFragment),
     Tiles(Tiles),
     GradientTiles(GradientTiles),
+    BeginShift(f32),
     BeginGroup(Group),
     EndGroup,
 }
@@ -313,7 +314,11 @@ pub fn paint(
     fonts: &Fonts,
 ) -> Canvas {
     let mut list = DisplayList::new();
-    paint_stacking(root, false, &mut list);
+    let view = View {
+        scroll_y,
+        height: height as f32,
+    };
+    paint_stacking(root, false, Rect::default(), view, &mut list);
     let mut canvas = Canvas::filled(width, height, canvas_background(root));
     run(&list, &mut canvas, scroll_y, fonts);
     canvas
@@ -323,7 +328,7 @@ fn group_end(list: &[(DisplayCommand, bool)]) -> usize {
     let mut depth = 0usize;
     for (index, (command, _)) in list.iter().enumerate() {
         match command {
-            DisplayCommand::BeginGroup(_) => depth += 1,
+            DisplayCommand::BeginGroup(_) | DisplayCommand::BeginShift(_) => depth += 1,
             DisplayCommand::EndGroup => {
                 if depth == 0 {
                     return index;
@@ -397,6 +402,11 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                     }
                 }
             }
+            DisplayCommand::BeginShift(shift) => {
+                let end = index + group_end(&list[index..]);
+                run(&list[index..end], canvas, scroll_y - shift, fonts);
+                index = (end + 1).min(list.len());
+            }
             DisplayCommand::EndGroup => {}
         }
     }
@@ -426,7 +436,14 @@ fn canvas_background(root: &LayoutBox) -> Color {
     WHITE
 }
 
+#[derive(Clone, Copy)]
+struct View {
+    scroll_y: f32,
+    height: f32,
+}
+
 struct Positioned<'a, 'b> {
+    container: Rect,
     z_index: i32,
     creates_context: bool,
     fixed: bool,
@@ -492,56 +509,71 @@ fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
 fn collect_positioned<'a, 'b>(
     children: &'b [LayoutBox<'a>],
     fixed: bool,
+    container: Rect,
     out: &mut Vec<Positioned<'a, 'b>>,
 ) {
     for child in children {
         let BoxKind::Block(style) = child.kind else {
-            collect_positioned(&child.children, fixed, out);
+            collect_positioned(&child.children, fixed, container, out);
             continue;
         };
         if !style.is_positioned() {
             if !style.has_effect() {
-                collect_positioned(&child.children, fixed, out);
+                collect_positioned(&child.children, fixed, child.dimensions.content, out);
             }
             continue;
         }
         let child_fixed = fixed || is_fixed(child);
         let z_index = style.z_index();
-        let creates_context = z_index.is_some() || style.has_effect();
+        let creates_context =
+            z_index.is_some() || style.has_effect() || style.position() == Position::Sticky;
         out.push(Positioned {
+            container,
             z_index: z_index.unwrap_or(0),
             creates_context,
             fixed: child_fixed,
             layout_box: child,
         });
         if !creates_context {
-            collect_positioned(&child.children, child_fixed, out);
+            collect_positioned(&child.children, child_fixed, child.dimensions.content, out);
         }
     }
 }
 
-fn paint_flow(children: &[LayoutBox], fixed: bool, list: &mut DisplayList) {
+fn paint_flow(
+    children: &[LayoutBox],
+    fixed: bool,
+    container: Rect,
+    view: View,
+    list: &mut DisplayList,
+) {
     for child in children {
         if is_positioned(child) {
             continue;
         }
         if group_of(child).is_some() {
-            paint_stacking(child, fixed, list);
+            paint_stacking(child, fixed, container, view, list);
             continue;
         }
         emit(list, fixed, decoration_commands(child));
         emit(list, fixed, content_commands(child));
-        paint_flow(&child.children, fixed, list);
+        paint_flow(&child.children, fixed, child.dimensions.content, view, list);
     }
 }
 
-fn paint_positioned(item: &Positioned, list: &mut DisplayList) {
+fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
     if item.creates_context {
-        paint_stacking(item.layout_box, item.fixed, list);
+        paint_stacking(item.layout_box, item.fixed, item.container, view, list);
     } else {
         emit(list, item.fixed, decoration_commands(item.layout_box));
         emit(list, item.fixed, content_commands(item.layout_box));
-        paint_flow(&item.layout_box.children, item.fixed, list);
+        paint_flow(
+            &item.layout_box.children,
+            item.fixed,
+            item.layout_box.dimensions.content,
+            view,
+            list,
+        );
     }
 }
 
@@ -564,29 +596,76 @@ fn group_of(layout_box: &LayoutBox) -> Option<Group> {
     })
 }
 
-fn paint_stacking(layout_box: &LayoutBox, fixed: bool, list: &mut DisplayList) {
+fn sticky_shift(layout_box: &LayoutBox, container: Rect, view: View) -> f32 {
+    let BoxKind::Block(style) = layout_box.kind else {
+        return 0.0;
+    };
+    if style.position() != Position::Sticky {
+        return 0.0;
+    }
+    let border = layout_box.dimensions.border_box();
+    let margin = layout_box.dimensions.margin_box();
+    let top = style.length_or_auto("top", None, Some(view.height));
+    let bottom = style.length_or_auto("bottom", None, Some(view.height));
+    let from_top = top.map(|top| (view.scroll_y + top - border.y).max(0.0));
+    let from_bottom = bottom
+        .map(|bottom| (view.scroll_y + view.height - bottom - (border.y + border.height)).min(0.0));
+    let shift = match (from_top, from_bottom) {
+        (Some(shift), _) if shift > 0.0 => shift,
+        (_, Some(shift)) => shift,
+        _ => 0.0,
+    };
+    let lowest = container.y + container.height - (margin.y + margin.height);
+    let highest = container.y - margin.y;
+    shift.min(lowest).max(highest)
+}
+
+fn paint_stacking(
+    layout_box: &LayoutBox,
+    fixed: bool,
+    container: Rect,
+    view: View,
+    list: &mut DisplayList,
+) {
+    let shift = if fixed {
+        0.0
+    } else {
+        sticky_shift(layout_box, container, view)
+    };
+    if shift != 0.0 {
+        list.push((DisplayCommand::BeginShift(shift), fixed));
+    }
     let group = group_of(layout_box);
     if let Some(group) = group {
         list.push((DisplayCommand::BeginGroup(group), fixed));
     }
-    paint_stacking_contents(layout_box, fixed, list);
+    paint_stacking_contents(layout_box, fixed, view, list);
     if group.is_some() {
+        list.push((DisplayCommand::EndGroup, fixed));
+    }
+    if shift != 0.0 {
         list.push((DisplayCommand::EndGroup, fixed));
     }
 }
 
-fn paint_stacking_contents(layout_box: &LayoutBox, fixed: bool, list: &mut DisplayList) {
+fn paint_stacking_contents(
+    layout_box: &LayoutBox,
+    fixed: bool,
+    view: View,
+    list: &mut DisplayList,
+) {
     emit(list, fixed, decoration_commands(layout_box));
+    let content = layout_box.dimensions.content;
     let mut positioned = Vec::new();
-    collect_positioned(&layout_box.children, fixed, &mut positioned);
+    collect_positioned(&layout_box.children, fixed, content, &mut positioned);
     positioned.sort_by_key(|item| item.z_index);
     for item in positioned.iter().filter(|item| item.z_index < 0) {
-        paint_positioned(item, list);
+        paint_positioned(item, view, list);
     }
     emit(list, fixed, content_commands(layout_box));
-    paint_flow(&layout_box.children, fixed, list);
+    paint_flow(&layout_box.children, fixed, content, view, list);
     for item in positioned.iter().filter(|item| item.z_index >= 0) {
-        paint_positioned(item, list);
+        paint_positioned(item, view, list);
     }
 }
 

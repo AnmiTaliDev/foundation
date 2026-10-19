@@ -600,7 +600,7 @@ impl<'a> LayoutBox<'a> {
             match position {
                 Position::Absolute => child.layout_absolute(area, fonts, images),
                 Position::Static => child.layout_out_of_flow(area, fonts, images),
-                Position::Relative | Position::Fixed => {}
+                Position::Relative | Position::Fixed | Position::Sticky => {}
             }
         }
     }

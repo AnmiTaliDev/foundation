@@ -292,7 +292,7 @@ fn relative_boxes_paint_above_normal_siblings() {
 }
 
 #[test]
-fn sticky_is_treated_as_static() {
+fn sticky_keeps_its_static_layout_position() {
     with_layout(
         "<html><style>body { margin: 0 } div { height: 10px; position: sticky; top: 5px }</style><body><div></div></body></html>",
         WINDOW,

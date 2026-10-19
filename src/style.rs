@@ -100,6 +100,7 @@ pub enum Position {
     Relative,
     Absolute,
     Fixed,
+    Sticky,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -591,6 +592,7 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "relative" => Position::Relative,
             Some(Value::Keyword(keyword)) if keyword == "absolute" => Position::Absolute,
             Some(Value::Keyword(keyword)) if keyword == "fixed" => Position::Fixed,
+            Some(Value::Keyword(keyword)) if keyword == "sticky" => Position::Sticky,
             _ => Position::Static,
         }
     }
