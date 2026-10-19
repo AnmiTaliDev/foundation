@@ -785,6 +785,26 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
                 .unwrap_or_default(),
         };
     }
+    if name == "border-spacing" {
+        let lengths: Vec<Value> = split_values(value)
+            .into_iter()
+            .filter_map(|token| match parse_value(token) {
+                Some(value @ (Value::Length(_) | Value::Em(_) | Value::Rem(_))) => Some(value),
+                _ => None,
+            })
+            .collect();
+        return match lengths.as_slice() {
+            [one] => vec![
+                declaration("border-spacing-x", one.clone()),
+                declaration("border-spacing-y", one.clone()),
+            ],
+            [x, y] => vec![
+                declaration("border-spacing-x", x.clone()),
+                declaration("border-spacing-y", y.clone()),
+            ],
+            _ => Vec::new(),
+        };
+    }
     if name == "list-style" {
         return split_values(value)
             .into_iter()

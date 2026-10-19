@@ -20,6 +20,13 @@ pub const USER_AGENT_STYLESHEET: &str =
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
+    table { display: table; border-spacing: 2px; } \
+    thead, tbody, tfoot { display: table-row-group; } \
+    tr { display: table-row; } \
+    td, th { display: table-cell; padding: 1px; vertical-align: middle; } \
+    th { font-weight: bold; text-align: center; } \
+    caption { text-align: center; } \
+    colgroup, col { display: none; } \
     ul, ol { margin-top: 16px; margin-bottom: 16px; padding-left: 40px; } \
     ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; } \
     li { display: list-item; } \
@@ -59,6 +66,10 @@ pub enum Display {
     Inline,
     InlineBlock,
     ListItem,
+    Table,
+    TableRowGroup,
+    TableRow,
+    TableCell,
     None,
 }
 
@@ -550,6 +561,17 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "inline" => Display::Inline,
             Some(Value::Keyword(keyword)) if keyword == "inline-block" => Display::InlineBlock,
             Some(Value::Keyword(keyword)) if keyword == "list-item" => Display::ListItem,
+            Some(Value::Keyword(keyword)) if keyword == "table" => Display::Table,
+            Some(Value::Keyword(keyword))
+                if matches!(
+                    keyword.as_str(),
+                    "table-row-group" | "table-header-group" | "table-footer-group"
+                ) =>
+            {
+                Display::TableRowGroup
+            }
+            Some(Value::Keyword(keyword)) if keyword == "table-row" => Display::TableRow,
+            Some(Value::Keyword(keyword)) if keyword == "table-cell" => Display::TableCell,
             Some(Value::Keyword(keyword)) if keyword == "flex" || keyword == "inline-flex" => {
                 Display::Flex
             }
@@ -734,7 +756,10 @@ impl<'a> StyledNode<'a> {
     pub fn establishes_block_context(&self) -> bool {
         if self.float().is_some()
             || self.is_out_of_flow()
-            || matches!(self.display(), Display::Flex | Display::InlineBlock)
+            || matches!(
+                self.display(),
+                Display::Flex | Display::InlineBlock | Display::Table | Display::TableCell
+            )
         {
             return true;
         }
@@ -783,6 +808,14 @@ impl<'a> StyledNode<'a> {
 
     pub fn has_effect(&self) -> bool {
         self.opacity() < 1.0 || matches!(self.value("transform"), Some(Value::Transform(_)))
+    }
+
+    pub fn vertical_align(&self) -> Option<&str> {
+        self.keyword("vertical-align")
+    }
+
+    pub fn border_collapse(&self) -> bool {
+        self.keyword("border-collapse") == Some("collapse")
     }
 
     pub fn list_style_type(&self) -> &str {

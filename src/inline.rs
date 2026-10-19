@@ -345,6 +345,14 @@ pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[Block
     total
 }
 
+pub fn min_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
+    let words = collect_words(&content.items, fonts, blocks);
+    words
+        .iter()
+        .map(|word| word.width(fonts))
+        .fold(0.0, f32::max)
+}
+
 pub fn layout_lines(
     content: &InlineContent,
     width: f32,

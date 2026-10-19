@@ -21,6 +21,7 @@ pub mod paint;
 pub mod picture;
 pub mod style;
 pub mod supports;
+mod table;
 pub mod text;
 pub mod transform;
 

@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::text::Fonts;
 
+use crate::css::Value;
 use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
 use crate::inline::{
@@ -41,6 +42,12 @@ pub struct Dimensions {
     pub margin: EdgeSizes,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Intrinsic {
+    Min,
+    Max,
+}
+
 pub type ImageMap = HashMap<String, Rc<Picture>>;
 
 #[derive(Debug)]
@@ -59,6 +66,7 @@ pub struct LayoutBox<'a> {
     pub inline_boxes: Vec<InlineBoxFragment>,
     pub background_picture: Option<Rc<Picture>>,
     pub(crate) marker: Option<String>,
+    pub(crate) suppressed_borders: [bool; 4],
     pub(crate) forced_width: Option<f32>,
     pub(crate) forced_height: Option<f32>,
     pub(crate) static_position: Option<(f32, f32)>,
@@ -128,6 +136,7 @@ impl<'a> LayoutBox<'a> {
             inline_boxes: Vec::new(),
             background_picture: None,
             marker: None,
+            suppressed_borders: [false; 4],
             forced_width: None,
             forced_height: None,
             static_position: None,
@@ -226,7 +235,12 @@ fn collect_child<'a>(
         || (blockify && matches!(node.content, Content::Element(_)));
     match display {
         Display::None => {}
-        Display::Block | Display::Flex => {
+        Display::Block
+        | Display::Flex
+        | Display::Table
+        | Display::TableRowGroup
+        | Display::TableRow
+        | Display::TableCell => {
             flush_items(align, flow);
             flow.children.push(build_block_box(node, images));
         }
@@ -382,7 +396,7 @@ pub(crate) fn block_replaced(
     })
 }
 
-fn horizontal_extras(style: &StyledNode, base: f32) -> f32 {
+pub(crate) fn horizontal_extras(style: &StyledNode, base: f32) -> f32 {
     style.px("margin-left", base)
         + style.px("margin-right", base)
         + style.px("border-left-width", base)
@@ -449,10 +463,22 @@ impl<'a> LayoutBox<'a> {
             BoxKind::Block(style) => {
                 let style = *style;
                 let replaced = block_replaced(style, images, containing.content.width);
+                let table = style.display() == Display::Table;
+                let given_width = self.forced_width;
+                if table && given_width.is_none() {
+                    self.forced_width =
+                        Some(self.table_width(style, containing.content.width, fonts, images));
+                }
                 self.calculate_width(style, containing, replaced.as_ref());
+                self.forced_width = given_width;
+                if table {
+                    self.center_table(style, containing.content.width);
+                }
                 self.calculate_position(style, containing);
                 if style.display() == Display::Flex {
                     self.layout_flex_children(style, fonts, images);
+                } else if table {
+                    self.layout_table_children(style, fonts, images);
                 } else if self.is_formatting_root(style) {
                     let mut own = FloatContext::default();
                     self.layout_children(fonts, images, &mut own);
@@ -465,7 +491,12 @@ impl<'a> LayoutBox<'a> {
                     self.layout_children(fonts, images, floats);
                 }
                 self.collapse_bottom_margin(style);
+                let table_height = self.dimensions.content.height;
                 self.calculate_height(style, replaced.as_ref());
+                if table {
+                    self.dimensions.content.height =
+                        self.dimensions.content.height.max(table_height);
+                }
                 self.place_marker(style, fonts);
                 if let Some(replaced) = replaced {
                     self.place_picture(replaced.picture);
@@ -556,8 +587,8 @@ impl<'a> LayoutBox<'a> {
         let margin_left = style.length_or_auto("margin-left", Some(0.0), Some(container));
         let margin_right = style.length_or_auto("margin-right", Some(0.0), Some(container));
 
-        let border_left = style.px("border-left-width", container);
-        let border_right = style.px("border-right-width", container);
+        let border_left = self.border_width(style, "border-left-width", 3, container);
+        let border_right = self.border_width(style, "border-right-width", 1, container);
         let padding_left = style.px("padding-left", container);
         let padding_right = style.px("padding-right", container);
         let fixed = border_left + border_right + padding_left + padding_right;
@@ -590,12 +621,14 @@ impl<'a> LayoutBox<'a> {
     fn calculate_position(&mut self, style: &StyledNode, containing: &Dimensions) {
         let base = containing.content.width;
         let margin_top = self.collapsed_top_margin(base);
+        let border_top = self.border_width(style, "border-top-width", 0, base);
+        let border_bottom = self.border_width(style, "border-bottom-width", 2, base);
         let d = &mut self.dimensions;
 
         d.margin.top = margin_top;
         d.margin.bottom = style.px("margin-bottom", base);
-        d.border.top = style.px("border-top-width", base);
-        d.border.bottom = style.px("border-bottom-width", base);
+        d.border.top = border_top;
+        d.border.bottom = border_bottom;
         d.padding.top = style.px("padding-top", base);
         d.padding.bottom = style.px("padding-bottom", base);
 
@@ -831,33 +864,91 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
+    fn center_table(&mut self, style: &StyledNode, container: f32) {
+        let is_auto = |name: &str| matches!(style.value(name), Some(Value::Keyword(keyword)) if keyword == "auto");
+        let auto_left = is_auto("margin-left");
+        let auto_right = is_auto("margin-right");
+        if !auto_left && !auto_right {
+            return;
+        }
+        let d = &mut self.dimensions;
+        let used =
+            d.content.width + d.padding.left + d.padding.right + d.border.left + d.border.right;
+        let fixed_left = if auto_left { 0.0 } else { d.margin.left };
+        let fixed_right = if auto_right { 0.0 } else { d.margin.right };
+        let free = (container - used - fixed_left - fixed_right).max(0.0);
+        match (auto_left, auto_right) {
+            (true, true) => {
+                d.margin.left = free / 2.0;
+                d.margin.right = free / 2.0;
+            }
+            (true, false) => d.margin.left = free,
+            _ => d.margin.right = free,
+        }
+    }
+
+    fn border_width(&self, style: &StyledNode, name: &str, side: usize, base: f32) -> f32 {
+        if self.suppressed_borders[side] {
+            0.0
+        } else {
+            style.px(name, base)
+        }
+    }
+
     fn calculate_forced_width(&mut self, style: &StyledNode, container: f32, width: f32) {
         let d = &mut self.dimensions;
         d.content.width = width;
         d.padding.left = style.px("padding-left", container);
         d.padding.right = style.px("padding-right", container);
-        d.border.left = style.px("border-left-width", container);
-        d.border.right = style.px("border-right-width", container);
+        d.border.left = if self.suppressed_borders[3] {
+            0.0
+        } else {
+            style.px("border-left-width", container)
+        };
+        d.border.right = if self.suppressed_borders[1] {
+            0.0
+        } else {
+            style.px("border-right-width", container)
+        };
         d.margin.left = style.px("margin-left", container);
         d.margin.right = style.px("margin-right", container);
     }
 
     pub(crate) fn preferred_width(&self, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
+        self.intrinsic_width(Intrinsic::Max, fonts, images, base)
+    }
+
+    pub(crate) fn intrinsic_width(
+        &self,
+        mode: Intrinsic,
+        fonts: &Fonts,
+        images: &ImageMap,
+        base: f32,
+    ) -> f32 {
         match &self.kind {
             BoxKind::Anonymous(content) => {
                 let blocks = layout_inline_blocks(content, base, fonts, images);
                 let metrics: Vec<BlockMetrics> = blocks.iter().map(|(_, m)| *m).collect();
-                inline::max_content_width(content, fonts, &metrics)
+                match mode {
+                    Intrinsic::Max => inline::max_content_width(content, fonts, &metrics),
+                    Intrinsic::Min => inline::min_content_width(content, fonts, &metrics),
+                }
             }
             BoxKind::Block(style) => {
                 if let Some(replaced) = block_replaced(style, images, base) {
                     return replaced.width;
                 }
-                if let Some(width) = style.length_or_auto("width", None, Some(base)) {
-                    return width;
+                let is_cell = style.display() == Display::TableCell;
+                if !(is_cell && mode == Intrinsic::Min) {
+                    if let Some(width) = style.length_or_auto("width", None, Some(base)) {
+                        return width;
+                    }
                 }
                 if style.display() == Display::Flex {
                     return self.flex_preferred_width(style, fonts, images, base);
+                }
+                if style.display() == Display::Table {
+                    return self.table_intrinsic_width(style, mode, fonts, images, base);
                 }
                 let mut widest: f32 = 0.0;
                 for child in &self.children {
@@ -870,7 +961,7 @@ impl<'a> LayoutBox<'a> {
                         BoxKind::Block(child_style) => horizontal_extras(child_style, base),
                         BoxKind::Anonymous(_) => 0.0,
                     };
-                    widest = widest.max(child.preferred_width(fonts, images, base) + extras);
+                    widest = widest.max(child.intrinsic_width(mode, fonts, images, base) + extras);
                 }
                 widest
             }
@@ -941,7 +1032,7 @@ impl<'a> LayoutBox<'a> {
         self.fragments.push(fragment);
     }
 
-    fn shrink_to_fit_width(
+    pub(crate) fn shrink_to_fit_width(
         &self,
         style: &StyledNode,
         container: f32,
@@ -1110,7 +1201,10 @@ impl<'a> LayoutBox<'a> {
     fn calculate_height(&mut self, style: &StyledNode, replaced: Option<&Replaced>) {
         if let Some(replaced) = replaced {
             self.dimensions.content.height = replaced.height;
-        } else if let Some(height) = style.length_or_auto("height", None, None) {
+        } else if let Some(height) = style
+            .length_or_auto("height", None, None)
+            .filter(|_| style.display() != Display::TableCell)
+        {
             self.dimensions.content.height = height;
         }
         if let Some(max) = style.length_or_auto("max-height", None, None) {
