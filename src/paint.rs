@@ -37,6 +37,7 @@ pub enum DisplayCommand {
     Tiles(Tiles),
     GradientTiles(GradientTiles),
     BeginShift(f32),
+    BeginClip(Rect),
     BeginGroup(Group),
     EndGroup,
 }
@@ -71,6 +72,7 @@ pub struct Canvas {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<Color>,
+    pub(crate) clip: (usize, usize, usize, usize),
 }
 
 impl Canvas {
@@ -83,6 +85,7 @@ impl Canvas {
             width,
             height,
             pixels: vec![color; width * height],
+            clip: (0, 0, width, height),
         }
     }
 
@@ -91,13 +94,21 @@ impl Canvas {
     }
 
     fn fill(&mut self, item: &SolidRect) {
-        let x0 = item.rect.x.clamp(0.0, self.width as f32).round() as usize;
-        let y0 = item.rect.y.clamp(0.0, self.height as f32).round() as usize;
+        let x0 = item
+            .rect
+            .x
+            .clamp(self.clip.0 as f32, self.clip.2 as f32)
+            .round() as usize;
+        let y0 = item
+            .rect
+            .y
+            .clamp(self.clip.1 as f32, self.clip.3 as f32)
+            .round() as usize;
         let x1 = (item.rect.x + item.rect.width)
-            .clamp(0.0, self.width as f32)
+            .clamp(self.clip.0 as f32, self.clip.2 as f32)
             .round() as usize;
         let y1 = (item.rect.y + item.rect.height)
-            .clamp(0.0, self.height as f32)
+            .clamp(self.clip.1 as f32, self.clip.3 as f32)
             .round() as usize;
         for y in y0..y1 {
             for x in x0..x1 {
@@ -126,10 +137,10 @@ impl Canvas {
                     let x = left + col as i64;
                     let y = top + row as i64;
                     if coverage == 0
-                        || x < 0
-                        || y < 0
-                        || x >= self.width as i64
-                        || y >= self.height as i64
+                        || x < self.clip.0 as i64
+                        || y < self.clip.1 as i64
+                        || x >= self.clip.2 as i64
+                        || y >= self.clip.3 as i64
                     {
                         continue;
                     }
@@ -145,12 +156,14 @@ impl Canvas {
         if rect.width <= 0.0 || rect.height <= 0.0 || picture.width == 0 || picture.height == 0 {
             return;
         }
-        let x_start = rect.x.round().clamp(0.0, self.width as f32) as usize;
-        let y_start = rect.y.round().clamp(0.0, self.height as f32) as usize;
-        let x_end = (rect.x + rect.width).round().clamp(0.0, self.width as f32) as usize;
+        let x_start = rect.x.round().clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
+        let y_start = rect.y.round().clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
+        let x_end = (rect.x + rect.width)
+            .round()
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
         let y_end = (rect.y + rect.height)
             .round()
-            .clamp(0.0, self.height as f32) as usize;
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
         let last_column = picture.width as usize - 1;
         let last_row = picture.height as usize - 1;
         for y in y_start..y_end {
@@ -185,14 +198,22 @@ impl Canvas {
         let prepared = tiles
             .gradient
             .prepare(tile.width, tile.height, tiles.font_size);
-        let x_start = tiles.clip.x.round().clamp(0.0, self.width as f32) as usize;
-        let y_start = tiles.clip.y.round().clamp(0.0, self.height as f32) as usize;
+        let x_start = tiles
+            .clip
+            .x
+            .round()
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
+        let y_start = tiles
+            .clip
+            .y
+            .round()
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
         let x_end = (tiles.clip.x + tiles.clip.width)
             .round()
-            .clamp(0.0, self.width as f32) as usize;
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
         let y_end = (tiles.clip.y + tiles.clip.height)
             .round()
-            .clamp(0.0, self.height as f32) as usize;
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
         for y in y_start..y_end {
             let Some(dy) = tile_offset(y as f32 + 0.5 - tile.y, tile.height, tiles.repeat_y) else {
                 continue;
@@ -218,14 +239,22 @@ impl Canvas {
         if tile.width <= 0.0 || tile.height <= 0.0 || picture.width == 0 || picture.height == 0 {
             return;
         }
-        let x_start = tiles.clip.x.round().clamp(0.0, self.width as f32) as usize;
-        let y_start = tiles.clip.y.round().clamp(0.0, self.height as f32) as usize;
+        let x_start = tiles
+            .clip
+            .x
+            .round()
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
+        let y_start = tiles
+            .clip
+            .y
+            .round()
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
         let x_end = (tiles.clip.x + tiles.clip.width)
             .round()
-            .clamp(0.0, self.width as f32) as usize;
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
         let y_end = (tiles.clip.y + tiles.clip.height)
             .round()
-            .clamp(0.0, self.height as f32) as usize;
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
         let last_column = picture.width as usize - 1;
         let last_row = picture.height as usize - 1;
         for y in y_start..y_end {
@@ -328,7 +357,9 @@ fn group_end(list: &[(DisplayCommand, bool)]) -> usize {
     let mut depth = 0usize;
     for (index, (command, _)) in list.iter().enumerate() {
         match command {
-            DisplayCommand::BeginGroup(_) | DisplayCommand::BeginShift(_) => depth += 1,
+            DisplayCommand::BeginGroup(_)
+            | DisplayCommand::BeginShift(_)
+            | DisplayCommand::BeginClip(_) => depth += 1,
             DisplayCommand::EndGroup => {
                 if depth == 0 {
                     return index;
@@ -407,6 +438,19 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                 run(&list[index..end], canvas, scroll_y - shift, fonts);
                 index = (end + 1).min(list.len());
             }
+            DisplayCommand::BeginClip(rect) => {
+                let end = index + group_end(&list[index..]);
+                let saved = canvas.clip;
+                let x0 = (rect.x.round().max(0.0) as usize).clamp(saved.0, saved.2);
+                let y0 = ((rect.y - offset).round().max(0.0) as usize).clamp(saved.1, saved.3);
+                let x1 = ((rect.x + rect.width).round().max(0.0) as usize).clamp(x0, saved.2);
+                let y1 = (((rect.y + rect.height) - offset).round().max(0.0) as usize)
+                    .clamp(y0, saved.3);
+                canvas.clip = (x0, y0, x1, y1);
+                run(&list[index..end], canvas, scroll_y, fonts);
+                canvas.clip = saved;
+                index = (end + 1).min(list.len());
+            }
             DisplayCommand::EndGroup => {}
         }
     }
@@ -448,6 +492,7 @@ struct Positioned<'a, 'b> {
     creates_context: bool,
     fixed: bool,
     layout_box: &'b LayoutBox<'a>,
+    clips: Vec<Rect>,
 }
 
 fn is_positioned(layout_box: &LayoutBox) -> bool {
@@ -510,16 +555,27 @@ fn collect_positioned<'a, 'b>(
     children: &'b [LayoutBox<'a>],
     fixed: bool,
     container: Rect,
+    clips: &[(Rect, bool)],
     out: &mut Vec<Positioned<'a, 'b>>,
 ) {
     for child in children {
         let BoxKind::Block(style) = child.kind else {
-            collect_positioned(&child.children, fixed, container, out);
+            collect_positioned(&child.children, fixed, container, clips, out);
             continue;
         };
         if !style.is_positioned() {
             if !style.has_effect() {
-                collect_positioned(&child.children, fixed, child.dimensions.content, out);
+                let mut inner = clips.to_vec();
+                if let Some(rect) = clip_of(child) {
+                    inner.push((rect, false));
+                }
+                collect_positioned(
+                    &child.children,
+                    fixed,
+                    child.dimensions.content,
+                    &inner,
+                    out,
+                );
             }
             continue;
         }
@@ -527,15 +583,36 @@ fn collect_positioned<'a, 'b>(
         let z_index = style.z_index();
         let creates_context =
             z_index.is_some() || style.has_effect() || style.position() == Position::Sticky;
+        let applying: Vec<Rect> = match style.position() {
+            Position::Fixed => Vec::new(),
+            Position::Absolute => clips
+                .iter()
+                .filter(|(_, absolute)| *absolute)
+                .map(|(rect, _)| *rect)
+                .collect(),
+            _ => clips.iter().map(|(rect, _)| *rect).collect(),
+        };
         out.push(Positioned {
             container,
             z_index: z_index.unwrap_or(0),
             creates_context,
             fixed: child_fixed,
             layout_box: child,
+            clips: applying,
         });
         if !creates_context {
-            collect_positioned(&child.children, child_fixed, child.dimensions.content, out);
+            let mut inner: Vec<(Rect, bool)> =
+                clips.iter().map(|(rect, _)| (*rect, true)).collect();
+            if let Some(rect) = clip_of(child) {
+                inner.push((rect, true));
+            }
+            collect_positioned(
+                &child.children,
+                child_fixed,
+                child.dimensions.content,
+                &inner,
+                out,
+            );
         }
     }
 }
@@ -556,16 +633,24 @@ fn paint_flow(
             continue;
         }
         emit(list, fixed, decoration_commands(child));
+        let clip = clip_of(child);
+        begin_clip(list, fixed, clip);
         emit(list, fixed, content_commands(child));
         paint_flow(&child.children, fixed, child.dimensions.content, view, list);
+        end_clip(list, fixed, clip);
     }
 }
 
 fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
+    for rect in &item.clips {
+        begin_clip(list, item.fixed, Some(*rect));
+    }
     if item.creates_context {
         paint_stacking(item.layout_box, item.fixed, item.container, view, list);
     } else {
         emit(list, item.fixed, decoration_commands(item.layout_box));
+        let clip = clip_of(item.layout_box);
+        begin_clip(list, item.fixed, clip);
         emit(list, item.fixed, content_commands(item.layout_box));
         paint_flow(
             &item.layout_box.children,
@@ -574,6 +659,36 @@ fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
             view,
             list,
         );
+        end_clip(list, item.fixed, clip);
+    }
+    for rect in &item.clips {
+        end_clip(list, item.fixed, Some(*rect));
+    }
+}
+
+fn clip_of(layout_box: &LayoutBox) -> Option<Rect> {
+    let BoxKind::Block(style) = layout_box.kind else {
+        return None;
+    };
+    let is_root = matches!(
+        style.content,
+        Content::Element(element) if element.tag_name == "html" || element.tag_name == "body"
+    );
+    if is_root || !style.establishes_clip() {
+        return None;
+    }
+    Some(layout_box.dimensions.padding_box())
+}
+
+fn begin_clip(list: &mut DisplayList, fixed: bool, clip: Option<Rect>) {
+    if let Some(rect) = clip {
+        list.push((DisplayCommand::BeginClip(rect), fixed));
+    }
+}
+
+fn end_clip(list: &mut DisplayList, fixed: bool, clip: Option<Rect>) {
+    if clip.is_some() {
+        list.push((DisplayCommand::EndGroup, fixed));
     }
 }
 
@@ -655,9 +770,11 @@ fn paint_stacking_contents(
     list: &mut DisplayList,
 ) {
     emit(list, fixed, decoration_commands(layout_box));
+    let clip = clip_of(layout_box);
+    begin_clip(list, fixed, clip);
     let content = layout_box.dimensions.content;
     let mut positioned = Vec::new();
-    collect_positioned(&layout_box.children, fixed, content, &mut positioned);
+    collect_positioned(&layout_box.children, fixed, content, &[], &mut positioned);
     positioned.sort_by_key(|item| item.z_index);
     for item in positioned.iter().filter(|item| item.z_index < 0) {
         paint_positioned(item, view, list);
@@ -667,6 +784,7 @@ fn paint_stacking_contents(
     for item in positioned.iter().filter(|item| item.z_index >= 0) {
         paint_positioned(item, view, list);
     }
+    end_clip(list, fixed, clip);
 }
 
 fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {

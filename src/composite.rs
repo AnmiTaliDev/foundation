@@ -74,10 +74,11 @@ pub(crate) fn draw_layer(
     let max_x = corners.iter().map(|c| c.0).fold(f32::MIN, f32::max);
     let min_y = corners.iter().map(|c| c.1).fold(f32::MAX, f32::min);
     let max_y = corners.iter().map(|c| c.1).fold(f32::MIN, f32::max);
-    let x_start = min_x.floor().clamp(0.0, destination.width as f32) as usize;
-    let x_end = max_x.ceil().clamp(0.0, destination.width as f32) as usize;
-    let y_start = min_y.floor().clamp(0.0, destination.height as f32) as usize;
-    let y_end = max_y.ceil().clamp(0.0, destination.height as f32) as usize;
+    let clip = destination.clip;
+    let x_start = min_x.floor().clamp(clip.0 as f32, clip.2 as f32) as usize;
+    let x_end = max_x.ceil().clamp(clip.0 as f32, clip.2 as f32) as usize;
+    let y_start = min_y.floor().clamp(clip.1 as f32, clip.3 as f32) as usize;
+    let y_end = max_y.ceil().clamp(clip.1 as f32, clip.3 as f32) as usize;
     for y in y_start..y_end {
         for x in x_start..x_end {
             let (source_x, source_y) = transform::apply(&inverse, x as f32 + 0.5, y as f32 + 0.5);

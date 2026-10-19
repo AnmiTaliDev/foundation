@@ -753,6 +753,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "gap" {
         return expand_gap(value);
     }
+    if name == "overflow" {
+        return expand_overflow(value);
+    }
     if name == "background" {
         let layers = gradient::split_top_level(value);
         let mut declarations = expand_background(layers[0]);
@@ -1369,6 +1372,34 @@ fn expand_flex_flow(text: &str) -> Vec<Declaration> {
         }
     }
     declarations
+}
+
+fn expand_overflow(text: &str) -> Vec<Declaration> {
+    let mut keywords = Vec::new();
+    for token in split_values(text) {
+        match parse_value(token) {
+            Some(Value::Keyword(keyword))
+                if matches!(
+                    keyword.as_str(),
+                    "visible" | "hidden" | "clip" | "scroll" | "auto"
+                ) =>
+            {
+                keywords.push(keyword)
+            }
+            _ => return Vec::new(),
+        }
+    }
+    match keywords.len() {
+        1 => vec![
+            declaration("overflow-x", Value::Keyword(keywords[0].clone())),
+            declaration("overflow-y", Value::Keyword(keywords[0].clone())),
+        ],
+        2 => vec![
+            declaration("overflow-x", Value::Keyword(keywords[0].clone())),
+            declaration("overflow-y", Value::Keyword(keywords[1].clone())),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 fn expand_gap(text: &str) -> Vec<Declaration> {

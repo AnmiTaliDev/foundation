@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 72] = [
+const PROPERTIES: [&str; 73] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -54,7 +54,8 @@ const PROPERTIES: [&str; 72] = [
     "min-height",
     "min-width",
     "order",
-    "overflow",
+    "overflow-x",
+    "overflow-y",
     "padding-bottom",
     "padding-left",
     "padding-right",

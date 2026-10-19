@@ -789,11 +789,16 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn establishes_clip(&self) -> bool {
-        matches!(
-            self.value("overflow"),
-            Some(Value::Keyword(keyword))
-                if keyword == "hidden" || keyword == "auto" || keyword == "scroll"
-        )
+        self.overflow_is(&["hidden", "clip", "auto", "scroll"])
+    }
+
+    fn overflow_is(&self, keywords: &[&str]) -> bool {
+        ["overflow-x", "overflow-y"].iter().any(|name| {
+            matches!(
+                self.value(name),
+                Some(Value::Keyword(keyword)) if keywords.contains(&keyword.as_str())
+            )
+        })
     }
 
     pub fn establishes_block_context(&self) -> bool {
@@ -810,12 +815,7 @@ impl<'a> StyledNode<'a> {
         {
             return true;
         }
-        match self.value("overflow") {
-            Some(Value::Keyword(keyword)) => {
-                keyword == "hidden" || keyword == "auto" || keyword == "scroll"
-            }
-            _ => false,
-        }
+        self.overflow_is(&["hidden", "auto", "scroll"])
     }
 
     pub fn background(&self) -> Option<Color> {
