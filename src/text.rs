@@ -91,6 +91,8 @@ const BUILTIN: [(&str, bool, bool, &[u8]); 12] = [
     ),
 ];
 
+const TAB_SIZE: f32 = 8.0;
+
 const ALIASES: [(&str, &str); 19] = [
     ("sans-serif", "dejavu sans"),
     ("system-ui", "dejavu sans"),
@@ -181,11 +183,16 @@ impl Fonts {
         })
     }
 
-    pub fn width(&self, face: usize, text: &str, font_size: f32) -> f32 {
+    pub fn advance(&self, face: usize, c: char, font_size: f32) -> f32 {
         let font = self.font(face);
-        text.chars()
-            .map(|c| font.metrics(c, font_size).advance_width)
-            .sum()
+        if c == '\t' {
+            return font.metrics(' ', font_size).advance_width * TAB_SIZE;
+        }
+        font.metrics(c, font_size).advance_width
+    }
+
+    pub fn width(&self, face: usize, text: &str, font_size: f32) -> f32 {
+        text.chars().map(|c| self.advance(face, c, font_size)).sum()
     }
 
     pub fn line_height(&self, face: usize, font_size: f32) -> f32 {

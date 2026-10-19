@@ -137,7 +137,7 @@ impl Canvas {
                     self.pixels[index] = blend(self.pixels[index], fragment.color, coverage);
                 }
             }
-            pen_x += metrics.advance_width;
+            pen_x += fonts.advance(fragment.face, c, fragment.font_size);
         }
     }
 

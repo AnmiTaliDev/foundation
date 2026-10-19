@@ -126,8 +126,12 @@ impl<'a> Parser<'a> {
         let start = self.pos;
         self.consume_char();
         self.consume_while(is_not_tag_start);
-        let text = &self.input[start..self.pos];
-        if self.stack.len() > 1 || !text.trim().is_empty() {
+        let mut text = &self.input[start..self.pos];
+        let top = self.stack.last().unwrap();
+        if top.children.is_empty() && matches!(top.tag_name.as_str(), "pre" | "listing") {
+            text = text.strip_prefix('\n').unwrap_or(text);
+        }
+        if !text.is_empty() && (self.stack.len() > 1 || !text.trim().is_empty()) {
             self.append(Node::text(entities::decode(text)));
         }
     }

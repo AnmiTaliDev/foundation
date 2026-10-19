@@ -6,7 +6,7 @@ use crate::css::Color;
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
-use crate::style::{StyledNode, TextAlign};
+use crate::style::{StyledNode, TextAlign, WhiteSpace};
 use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +19,7 @@ pub struct Run<'a> {
     pub families: &'a [String],
     pub bold: bool,
     pub italic: bool,
+    pub white_space: WhiteSpace,
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +178,13 @@ impl Word<'_> {
         }
     }
 
+    fn wraps(&self) -> bool {
+        match &self.piece {
+            Piece::Text { run, .. } => run.white_space.wraps(),
+            Piece::Image(_) | Piece::Block { .. } => true,
+        }
+    }
+
     fn lead(&self) -> f32 {
         self.opens.iter().map(|style| style.left_extra()).sum()
     }
@@ -195,6 +203,65 @@ impl Word<'_> {
     }
 }
 
+fn text_words<'a>(
+    run: &'a Run<'a>,
+    carry_space: bool,
+    pending_break: &mut bool,
+) -> Vec<(&'a str, bool, bool)> {
+    let mut words = Vec::new();
+    if !run.white_space.keeps_breaks() {
+        for (index, text) in run.text.split_whitespace().enumerate() {
+            let space_before = if index == 0 {
+                carry_space || run.text.starts_with(char::is_whitespace)
+            } else {
+                true
+            };
+            words.push((text, space_before, false));
+        }
+        return words;
+    }
+
+    let lines: Vec<&str> = run.text.split('\n').collect();
+    let last = lines.len() - 1;
+    for (number, line) in lines.into_iter().enumerate() {
+        let mut breaks = number > 0 || std::mem::take(pending_break);
+        let before = words.len();
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if run.white_space.keeps_spaces() {
+            let mut start = 0;
+            let mut previous_space = false;
+            for (index, c) in line.char_indices() {
+                let space = c == ' ' || c == '\t';
+                if previous_space && !space {
+                    words.push((&line[start..index], false, std::mem::take(&mut breaks)));
+                    start = index;
+                }
+                previous_space = space;
+            }
+            if start < line.len() {
+                words.push((&line[start..], false, std::mem::take(&mut breaks)));
+            }
+        } else {
+            for (index, text) in line.split_whitespace().enumerate() {
+                let space_before = if index == 0 {
+                    number == 0 && (carry_space || line.starts_with(char::is_whitespace))
+                } else {
+                    true
+                };
+                words.push((text, space_before, std::mem::take(&mut breaks)));
+            }
+        }
+        if words.len() == before {
+            if number < last {
+                words.push(("", false, breaks));
+            } else if breaks {
+                *pending_break = true;
+            }
+        }
+    }
+    words
+}
+
 fn collect_words<'a>(
     items: &'a [InlineItem<'a>],
     fonts: &Fonts,
@@ -203,36 +270,34 @@ fn collect_words<'a>(
     let mut block_index = 0;
     let mut words: Vec<Word<'a>> = Vec::new();
     let mut carry_space = false;
+    let mut pending_break = false;
     let mut stack: Vec<Rc<InlineBoxStyle>> = Vec::new();
     let mut pending: Vec<Rc<InlineBoxStyle>> = Vec::new();
     for item in items {
         match item {
             InlineItem::Text(run) => {
-                let mut first = true;
                 let face = fonts.select(run.families, run.bold, run.italic);
-                for text in run.text.split_whitespace() {
-                    let space_before = if first {
-                        carry_space || run.text.starts_with(char::is_whitespace)
-                    } else {
-                        true
-                    };
-                    first = false;
+                for (text, space_before, break_before) in
+                    text_words(run, carry_space, &mut pending_break)
+                {
                     words.push(Word {
                         piece: Piece::Text { text, run, face },
                         space_before,
-                        break_before: false,
+                        break_before,
                         opens: std::mem::take(&mut pending),
                         closes: Vec::new(),
                         stack: stack.clone(),
                     });
                 }
-                carry_space = run.text.ends_with(char::is_whitespace);
+                carry_space = !run.white_space.keeps_spaces()
+                    && !pending_break
+                    && run.text.ends_with(char::is_whitespace);
             }
             InlineItem::Image(image) => {
                 words.push(Word {
                     piece: Piece::Image(image),
                     space_before: carry_space,
-                    break_before: false,
+                    break_before: std::mem::take(&mut pending_break),
                     opens: std::mem::take(&mut pending),
                     closes: Vec::new(),
                     stack: stack.clone(),
@@ -247,7 +312,7 @@ fn collect_words<'a>(
                         index: block_index,
                     },
                     space_before: carry_space,
-                    break_before: false,
+                    break_before: std::mem::take(&mut pending_break),
                     opens: std::mem::take(&mut pending),
                     closes: Vec::new(),
                     stack: stack.clone(),
@@ -284,7 +349,7 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a
     let mut start = 0;
     let mut piece_width = 0.0;
     for (index, c) in text.char_indices() {
-        let advance = fonts.font(face).metrics(c, run.font_size).advance_width;
+        let advance = fonts.advance(face, c, run.font_size);
         if piece_width + advance > width && index > start {
             pieces.push(&text[start..index]);
             start = index;
@@ -324,7 +389,7 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a
 fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a>> {
     let mut fitted = Vec::new();
     for word in words {
-        if matches!(word.piece, Piece::Text { .. }) && word.width(fonts) > width {
+        if word.wraps() && matches!(word.piece, Piece::Text { .. }) && word.width(fonts) > width {
             fitted.extend(split_long_word(word, width, fonts));
         } else {
             fitted.push(word);
@@ -335,22 +400,38 @@ fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a
 
 pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
     let words = collect_words(&content.items, fonts, blocks);
+    let mut widest: f32 = 0.0;
     let mut total = 0.0;
     for word in &words {
+        if word.break_before {
+            total = 0.0;
+        }
         if total > 0.0 && word.space_before {
             total += fonts.width(word.face(), " ", word.font_size());
         }
         total += word.width(fonts);
+        widest = widest.max(total);
     }
-    total
+    widest
 }
 
 pub fn min_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
     let words = collect_words(&content.items, fonts, blocks);
-    words
-        .iter()
-        .map(|word| word.width(fonts))
-        .fold(0.0, f32::max)
+    let mut widest: f32 = 0.0;
+    let mut current = 0.0;
+    for word in &words {
+        let mut width = word.width(fonts);
+        if !word.wraps() && !word.break_before && current > 0.0 {
+            if word.space_before {
+                width += fonts.width(word.face(), " ", word.font_size());
+            }
+            current += width;
+        } else {
+            current = width;
+        }
+        widest = widest.max(current);
+    }
+    widest
 }
 
 pub fn layout_lines(
@@ -379,7 +460,7 @@ pub fn layout_lines(
         if x > 0.0 && word.space_before {
             space = fonts.width(word.face(), " ", word.font_size());
         }
-        let overflows = x + space + word_width > area.width;
+        let overflows = word.wraps() && x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
             top += finish_line(&line, content.align, &area, top, fonts, &mut lines);
             line.clear();

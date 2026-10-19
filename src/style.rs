@@ -21,6 +21,7 @@ pub const USER_AGENT_STYLESHEET: &str =
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
+    pre { margin-top: 16px; margin-bottom: 16px; white-space: pre; } \
     table { display: table; border-spacing: 2px; } \
     thead, tbody, tfoot { display: table-row-group; } \
     tr { display: table-row; } \
@@ -40,7 +41,8 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 8] = [
+const INHERITED_PROPERTIES: [&str; 9] = [
+    "white-space",
     "list-style-type",
     "color",
     "font-size",
@@ -131,6 +133,32 @@ pub enum Clear {
     Left,
     Right,
     Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WhiteSpace {
+    Normal,
+    Nowrap,
+    Pre,
+    PreWrap,
+    PreLine,
+}
+
+impl WhiteSpace {
+    pub fn wraps(self) -> bool {
+        matches!(
+            self,
+            WhiteSpace::Normal | WhiteSpace::PreWrap | WhiteSpace::PreLine
+        )
+    }
+
+    pub fn keeps_spaces(self) -> bool {
+        matches!(self, WhiteSpace::Pre | WhiteSpace::PreWrap)
+    }
+
+    pub fn keeps_breaks(self) -> bool {
+        !matches!(self, WhiteSpace::Normal | WhiteSpace::Nowrap)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -596,6 +624,16 @@ impl<'a> StyledNode<'a> {
             Some(Value::Number(factor)) => Some(factor * self.font_size()),
             Some(Value::Length(px)) => Some(*px),
             _ => None,
+        }
+    }
+
+    pub fn white_space(&self) -> WhiteSpace {
+        match self.value("white-space") {
+            Some(Value::Keyword(keyword)) if keyword == "nowrap" => WhiteSpace::Nowrap,
+            Some(Value::Keyword(keyword)) if keyword == "pre" => WhiteSpace::Pre,
+            Some(Value::Keyword(keyword)) if keyword == "pre-wrap" => WhiteSpace::PreWrap,
+            Some(Value::Keyword(keyword)) if keyword == "pre-line" => WhiteSpace::PreLine,
+            _ => WhiteSpace::Normal,
         }
     }
 

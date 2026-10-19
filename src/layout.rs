@@ -278,6 +278,7 @@ fn collect_child<'a>(
                 families: node.font_families(),
                 bold: node.font_bold(),
                 italic: node.font_italic(),
+                white_space: node.white_space(),
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -350,7 +351,9 @@ fn flush_items(align: TextAlign, flow: &mut Flow) {
     for item in &flow.items {
         match item {
             InlineItem::Text(run) => {
-                if !run.text.trim().is_empty() {
+                if !run.text.trim().is_empty()
+                    || (run.white_space.keeps_spaces() && !run.text.is_empty())
+                {
                     has_content = true;
                 }
             }
