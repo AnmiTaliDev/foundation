@@ -13,6 +13,7 @@ use crate::inline::{Fragment, ImageFragment};
 use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
 use crate::radius::{Radii, Round};
+use crate::shadow;
 use crate::style::{Content, Position, StyledNode};
 
 const BLACK: Color = Color { r: 0, g: 0, b: 0 };
@@ -40,8 +41,20 @@ pub enum DisplayCommand {
     BeginShift(f32),
     BeginClip(Clip),
     BeginRound(Round),
+    Shadow(ShadowPaint),
     BeginGroup(Group),
     EndGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowPaint {
+    pub shape: Round,
+    pub container: Round,
+    pub bounds: Rect,
+    pub blur: f32,
+    pub color: Color,
+    pub alpha: u8,
+    pub inset: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,6 +139,40 @@ impl Canvas {
         } else {
             blend(self.pixels[index], color, alpha)
         };
+    }
+
+    fn draw_shadow(&mut self, paint: &ShadowPaint) {
+        let bounds = paint.bounds;
+        let x_start = bounds
+            .x
+            .floor()
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
+        let x_end = (bounds.x + bounds.width)
+            .ceil()
+            .clamp(self.clip.0 as f32, self.clip.2 as f32) as usize;
+        let y_start = bounds
+            .y
+            .floor()
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
+        let y_end = (bounds.y + bounds.height)
+            .ceil()
+            .clamp(self.clip.1 as f32, self.clip.3 as f32) as usize;
+        for y in y_start..y_end {
+            for x in x_start..x_end {
+                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                let shape = shadow::blurred_coverage(paint.shape.distance(px, py), paint.blur);
+                let container = paint.container.coverage(px, py);
+                let amount = if paint.inset {
+                    (1.0 - shape) * container
+                } else {
+                    shape * (1.0 - container)
+                };
+                let alpha = (f32::from(paint.alpha) * amount).round() as u8;
+                if alpha > 0 {
+                    self.put(x, y, paint.color, alpha);
+                }
+            }
+        }
     }
 
     fn fill(&mut self, item: &SolidRect) {
@@ -465,6 +512,13 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
                 run(&list[index..end], canvas, scroll_y - shift, fonts);
                 index = (end + 1).min(list.len());
             }
+            DisplayCommand::Shadow(paint) => {
+                let mut shifted = *paint;
+                shifted.shape.rect.y -= offset;
+                shifted.container.rect.y -= offset;
+                shifted.bounds.y -= offset;
+                canvas.draw_shadow(&shifted);
+            }
             DisplayCommand::BeginRound(round) => {
                 let end = index + group_end(&list[index..]);
                 let mut shifted = *round;
@@ -566,7 +620,9 @@ fn emit(list: &mut DisplayList, fixed: bool, commands: Vec<DisplayCommand>) {
 
 fn decoration_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let mut commands = Vec::new();
+    paint_shadows(layout_box, false, &mut commands);
     paint_background(layout_box, &mut commands);
+    paint_shadows(layout_box, true, &mut commands);
     paint_borders(layout_box, &mut commands);
     commands
 }
@@ -842,6 +898,103 @@ fn paint_stacking_contents(
         paint_positioned(item, view, list);
     }
     end_clip(list, fixed, clip);
+}
+
+fn paint_shadows(layout_box: &LayoutBox, inset: bool, list: &mut Vec<DisplayCommand>) {
+    let BoxKind::Block(style) = layout_box.kind else {
+        return;
+    };
+    let d = &layout_box.dimensions;
+    let border_box = d.border_box();
+    let radii = box_radii(layout_box, style);
+    let widths = [d.border.top, d.border.right, d.border.bottom, d.border.left];
+    let font_size = style.font_size();
+    for spec in style.box_shadows().iter().rev() {
+        if spec.inset != inset {
+            continue;
+        }
+        let x = spec.offset_x.resolve(font_size);
+        let y = spec.offset_y.resolve(font_size);
+        let blur = spec.blur.resolve(font_size);
+        let spread = spec.spread.resolve(font_size);
+        let Rgba { color, alpha } = spec.color.unwrap_or_else(|| Rgba {
+            color: style.text_color(),
+            alpha: 255,
+        });
+        if alpha == 0 {
+            continue;
+        }
+        let grow = |rect: Rect, amount: f32| Rect {
+            x: rect.x - amount,
+            y: rect.y - amount,
+            width: (rect.width + 2.0 * amount).max(0.0),
+            height: (rect.height + 2.0 * amount).max(0.0),
+        };
+        let (shape, container, bounds) = if inset {
+            let padding = d.padding_box();
+            let inner = radii.shrink(widths);
+            let mut hole = grow(padding, -spread);
+            hole.x += x;
+            hole.y += y;
+            let hole_radii = Radii {
+                corners: inner.corners.map(|(rx, ry)| {
+                    if rx > 0.0 && ry > 0.0 {
+                        ((rx - spread).max(0.0), (ry - spread).max(0.0))
+                    } else {
+                        (0.0, 0.0)
+                    }
+                }),
+            };
+            (
+                Round {
+                    rect: hole,
+                    radii: hole_radii,
+                    inverted: false,
+                },
+                Round {
+                    rect: padding,
+                    radii: inner,
+                    inverted: false,
+                },
+                padding,
+            )
+        } else {
+            let mut shape_rect = grow(border_box, spread);
+            shape_rect.x += x;
+            shape_rect.y += y;
+            let shape_radii = Radii {
+                corners: radii.corners.map(|(rx, ry)| {
+                    if rx > 0.0 && ry > 0.0 {
+                        ((rx + spread).max(0.0), (ry + spread).max(0.0))
+                    } else {
+                        (0.0, 0.0)
+                    }
+                }),
+            };
+            (
+                Round {
+                    rect: shape_rect,
+                    radii: shape_radii,
+                    inverted: false,
+                },
+                Round {
+                    rect: border_box,
+                    radii,
+                    inverted: false,
+                },
+                grow(shape_rect, blur + 1.0),
+            )
+        };
+        list.push(DisplayCommand::Shadow(ShadowPaint {
+            shape,
+            container,
+            bounds,
+            blur,
+            color,
+            alpha,
+            inset,
+        }));
+    }
 }
 
 fn box_radii(layout_box: &LayoutBox, style: &StyledNode) -> Radii {

@@ -5,6 +5,7 @@ use crate::color::{self, Rgba};
 use crate::gradient::{self, Gradient};
 use crate::gridspec::{self, Line, TrackList};
 use crate::media::MediaList;
+use crate::shadow::{self, Shadow};
 use crate::supports;
 use crate::transform::{self, Function};
 
@@ -76,6 +77,7 @@ pub enum Value {
     Tracks(TrackList),
     GridLine(Line),
     Areas(Vec<Vec<String>>),
+    Shadows(Vec<Shadow>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -756,6 +758,18 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if let Some(declarations) = expand_radius(&name, value) {
         return declarations;
     }
+    if name == "box-shadow" {
+        return match shadow::parse(value) {
+            Some(shadows) => vec![Declaration {
+                name,
+                value: Value::Shadows(shadows),
+            }],
+            None => parse_value(value)
+                .filter(|value| matches!(value, Value::Keyword(keyword) if keyword == "none"))
+                .map(|value| vec![Declaration { name, value }])
+                .unwrap_or_default(),
+        };
+    }
     if name == "overflow" {
         return expand_overflow(value);
     }
@@ -863,7 +877,7 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     }
 }
 
-fn split_values(text: &str) -> Vec<&str> {
+pub(crate) fn split_values(text: &str) -> Vec<&str> {
     let mut values = Vec::new();
     let mut depth = 0usize;
     let mut start: Option<usize> = None;

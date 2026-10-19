@@ -57,6 +57,15 @@ impl Radii {
 
 impl Round {
     pub fn coverage(&self, x: f32, y: f32) -> f32 {
+        let inside = (0.5 - self.distance(x, y)).clamp(0.0, 1.0);
+        if self.inverted {
+            1.0 - inside
+        } else {
+            inside
+        }
+    }
+
+    pub fn distance(&self, x: f32, y: f32) -> f32 {
         let rect = &self.rect;
         let right = rect.x + rect.width;
         let bottom = rect.y + rect.height;
@@ -79,11 +88,6 @@ impl Round {
                 distance = (ratio - 1.0) * rx.min(ry);
             }
         }
-        let inside = (0.5 - distance).clamp(0.0, 1.0);
-        if self.inverted {
-            1.0 - inside
-        } else {
-            inside
-        }
+        distance
     }
 }

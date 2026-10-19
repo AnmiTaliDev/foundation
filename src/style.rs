@@ -11,6 +11,7 @@ use crate::float::Side;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
 use crate::radius::Radii;
+use crate::shadow::Shadow;
 use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -787,6 +788,13 @@ impl<'a> StyledNode<'a> {
 
     pub fn order(&self) -> i32 {
         self.number("order", 0.0) as i32
+    }
+
+    pub fn box_shadows(&self) -> &[Shadow] {
+        match self.value("box-shadow") {
+            Some(Value::Shadows(shadows)) => shadows,
+            _ => &[],
+        }
     }
 
     pub fn border_radii(&self, width: f32, height: f32) -> Radii {
