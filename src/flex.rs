@@ -249,6 +249,9 @@ fn read_item(
         item.shrink = style.flex_shrink();
         item.order = style.order();
         item.align = style.align_self().unwrap_or(item.align);
+        if axes.row && style.aspect_ratio().is_some() && item.align == Align::Stretch {
+            item.align = Align::Start;
+        }
         let basis_base = if axes.row {
             Some(width)
         } else {

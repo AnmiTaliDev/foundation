@@ -1504,6 +1504,13 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn aspect_ratio(&self) -> Option<f32> {
+        match self.value("aspect-ratio") {
+            Some(Value::Number(ratio)) => Some(*ratio),
+            _ => None,
+        }
+    }
+
     pub fn is_border_box(&self) -> bool {
         self.keyword("box-sizing") == Some("border-box")
     }

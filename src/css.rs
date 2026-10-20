@@ -975,6 +975,12 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             _ => Vec::new(),
         };
     }
+    if name == "aspect-ratio" {
+        return match parse_ratio(value) {
+            Some(value) => vec![Declaration { name, value }],
+            None => Vec::new(),
+        };
+    }
     if name == "background-position" {
         return expand_position(&split_values(value), "background-position");
     }
@@ -1872,6 +1878,24 @@ fn is_border_color(token: &str) -> bool {
         Some(Value::Color(_) | Value::Rgba(..)) | Some(Value::Keyword(_))
     ) && !is_line_style(&token.to_ascii_lowercase())
         || token.eq_ignore_ascii_case("currentcolor")
+}
+
+fn parse_ratio(text: &str) -> Option<Value> {
+    let lower = text.trim().to_ascii_lowercase();
+    if lower == "auto" {
+        return Some(Value::Keyword(lower));
+    }
+    let ratio = lower.strip_prefix("auto").map_or(lower.as_str(), str::trim);
+    let (first, second) = match ratio.split_once('/') {
+        Some((first, second)) => (first.trim(), second.trim()),
+        None => (ratio, "1"),
+    };
+    let first: f32 = first.parse().ok()?;
+    let second: f32 = second.parse().ok()?;
+    if first <= 0.0 || second <= 0.0 || !first.is_finite() || !second.is_finite() {
+        return None;
+    }
+    Some(Value::Number(first / second))
 }
 
 fn is_line_style(keyword: &str) -> bool {

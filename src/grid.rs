@@ -1113,6 +1113,7 @@ fn place_item(
             + margins.bottom;
         let replaced = block_replaced(style, images, area_width);
         let specified = replaced.is_some()
+            || style.aspect_ratio().is_some()
             || style
                 .length_or_auto("height", None, Some(area_height))
                 .is_some();

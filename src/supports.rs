@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 119] = [
+const PROPERTIES: [&str; 120] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -41,6 +41,7 @@ const PROPERTIES: [&str; 119] = [
     "border-right-width",
     "border-top-width",
     "box-sizing",
+    "aspect-ratio",
     "border-top-style",
     "border-top-color",
     "border-right-color",

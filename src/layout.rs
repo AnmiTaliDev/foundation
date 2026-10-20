@@ -1279,6 +1279,23 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
+    fn ratio_height(&self, style: &StyledNode) -> Option<f32> {
+        let ratio = style.aspect_ratio()?;
+        if style.length_or_auto("height", None, None).is_some()
+            || style.display() == Display::TableCell
+        {
+            return None;
+        }
+        let d = &self.dimensions;
+        if !style.is_border_box() {
+            return Some(d.content.width / ratio);
+        }
+        let width =
+            d.content.width + d.padding.left + d.padding.right + d.border.left + d.border.right;
+        let extras = d.padding.top + d.padding.bottom + d.border.top + d.border.bottom;
+        Some((width / ratio - extras).max(0.0))
+    }
+
     fn calculate_height(&mut self, style: &StyledNode, replaced: Option<&Replaced>) {
         if let Some(replaced) = replaced {
             self.dimensions.content.height = replaced.height;
@@ -1286,6 +1303,9 @@ impl<'a> LayoutBox<'a> {
             .length_or_auto("height", None, None)
             .filter(|_| style.display() != Display::TableCell)
         {
+            self.dimensions.content.height = height;
+        }
+        if let Some(height) = self.ratio_height(style).filter(|_| replaced.is_none()) {
             self.dimensions.content.height = height;
         }
         if let Some(max) = style.length_or_auto("max-height", None, None) {
