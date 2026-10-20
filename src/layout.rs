@@ -10,7 +10,7 @@ use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
 use crate::inline::{
     self, BlockMetrics, BlockRun, Fragment, ImageFragment, ImageRun, InlineBoxFragment,
-    InlineBoxStyle, InlineContent, InlineItem, Run,
+    InlineBoxStyle, InlineContent, InlineItem, RuleFragment, Run,
 };
 use crate::list;
 use crate::picture::Picture;
@@ -64,6 +64,7 @@ pub struct LayoutBox<'a> {
     pub fragments: Vec<Fragment>,
     pub images: Vec<ImageFragment>,
     pub inline_boxes: Vec<InlineBoxFragment>,
+    pub rules: Vec<RuleFragment>,
     pub background_picture: Option<Rc<Picture>>,
     pub(crate) marker: Option<String>,
     pub(crate) suppressed_borders: [bool; 4],
@@ -134,6 +135,7 @@ impl<'a> LayoutBox<'a> {
             fragments: Vec::new(),
             images: Vec::new(),
             inline_boxes: Vec::new(),
+            rules: Vec::new(),
             background_picture: None,
             marker: None,
             suppressed_borders: [false; 4],
@@ -279,6 +281,7 @@ fn collect_child<'a>(
                 bold: node.font_bold(),
                 italic: node.font_italic(),
                 white_space: node.white_space(),
+                decorations: node.decorations(),
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -526,6 +529,7 @@ impl<'a> LayoutBox<'a> {
                 self.fragments = lines.fragments;
                 self.images = lines.images;
                 self.inline_boxes = lines.boxes;
+                self.rules = lines.rules;
                 for placed in lines.blocks {
                     let (mut block, metrics) = std::mem::replace(
                         &mut blocks[placed.index],
@@ -982,6 +986,7 @@ impl<'a> LayoutBox<'a> {
         self.fragments.clear();
         self.images.clear();
         self.inline_boxes.clear();
+        self.rules.clear();
         for child in &mut self.children {
             child.reset();
         }
@@ -1005,6 +1010,10 @@ impl<'a> LayoutBox<'a> {
         for inline_box in &mut self.inline_boxes {
             inline_box.rect.x += dx;
             inline_box.rect.y += dy;
+        }
+        for rule in &mut self.rules {
+            rule.rect.x += dx;
+            rule.rect.y += dy;
         }
         for image in &mut self.images {
             image.rect.x += dx;

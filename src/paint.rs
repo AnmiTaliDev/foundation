@@ -647,9 +647,24 @@ fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
             }
         }
     }
+    let rule_commands = |over_text: bool| {
+        layout_box
+            .rules
+            .iter()
+            .filter(move |rule| rule.over_text == over_text)
+            .map(|rule| {
+                DisplayCommand::Rect(SolidRect {
+                    color: rule.color,
+                    alpha: rule.alpha,
+                    rect: rule.rect,
+                })
+            })
+    };
+    commands.extend(rule_commands(false));
     for fragment in &layout_box.fragments {
         commands.push(DisplayCommand::Text(fragment.clone()));
     }
+    commands.extend(rule_commands(true));
     for image in &layout_box.images {
         commands.push(DisplayCommand::Image(image.clone()));
     }

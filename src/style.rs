@@ -6,6 +6,7 @@ use crate::color::Rgba;
 use crate::css::{
     self, Color, Combinator, Declaration, Rule, Selector, Specificity, Stylesheet, Value,
 };
+use crate::decoration::{self, Decoration, LineStyle};
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
 use crate::gradient::Gradient;
@@ -23,6 +24,8 @@ pub const USER_AGENT_STYLESHEET: &str =
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
+    u, ins, a { text-decoration: underline; } \
+    s, del { text-decoration: line-through; } \
     pre { margin-top: 16px; margin-bottom: 16px; white-space: pre; } \
     table { display: table; border-spacing: 2px; } \
     thead, tbody, tfoot { display: table-row-group; } \
@@ -333,6 +336,9 @@ fn style_node<'a>(
             inherited.insert(name.to_string(), value.clone());
         }
     }
+    if let Some(active) = parent.get(ACTIVE_DECORATIONS) {
+        inherited.insert(ACTIVE_DECORATIONS.to_string(), active.clone());
+    }
     match &node.node_type {
         NodeType::Text(text) => StyledNode {
             content: Content::Text(text),
@@ -345,6 +351,7 @@ fn style_node<'a>(
             resolve_font_size(&mut values, parent);
             resolve_line_height(&mut values);
             resolve_current_color(&mut values, parent);
+            resolve_decorations(&mut values, parent);
             let children_root_font_size = if ancestors.is_empty() {
                 font_size_of(&values)
             } else {
@@ -419,6 +426,75 @@ fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
         Some(px) => values.insert("font-size".to_string(), Value::Length(px)),
         None => values.remove("font-size"),
     };
+}
+
+const ACTIVE_DECORATIONS: &str = "text-decoration-active";
+
+fn resolve_decorations(values: &mut PropertyMap, parent: &PropertyMap) {
+    let keyword_is = |values: &PropertyMap, name: &str, keywords: &[&str]| {
+        matches!(
+            values.get(name),
+            Some(Value::Keyword(keyword)) if keywords.contains(&keyword.as_str())
+        )
+    };
+    let detached = keyword_is(values, "display", &["inline-block"])
+        || keyword_is(values, "float", &["left", "right"])
+        || keyword_is(values, "position", &["absolute", "fixed"]);
+    let mut active = match parent.get(ACTIVE_DECORATIONS) {
+        Some(Value::Decorations(list)) if !detached => list.clone(),
+        _ => Vec::new(),
+    };
+    let font_size = font_size_of(values);
+    let current = match values.get("color") {
+        Some(Value::Color(color)) => Rgba {
+            color: *color,
+            alpha: 255,
+        },
+        Some(Value::Rgba(color, alpha)) => Rgba {
+            color: *color,
+            alpha: *alpha,
+        },
+        _ => Rgba {
+            color: BLACK,
+            alpha: 255,
+        },
+    };
+    let color = match values.get("text-decoration-color") {
+        Some(Value::Color(color)) => Rgba {
+            color: *color,
+            alpha: 255,
+        },
+        Some(Value::Rgba(color, alpha)) => Rgba {
+            color: *color,
+            alpha: *alpha,
+        },
+        _ => current,
+    };
+    let style = match values.get("text-decoration-style") {
+        Some(Value::Keyword(keyword)) => decoration::parse_style(keyword),
+        _ => None,
+    }
+    .unwrap_or(LineStyle::Solid);
+    let thickness = match values.get("text-decoration-thickness") {
+        Some(Value::Length(px)) => Some(*px),
+        Some(Value::Em(em)) => Some(em * font_size),
+        _ => None,
+    };
+    if let Some(Value::Keyword(text)) = values.get("text-decoration-line") {
+        for line in decoration::parse_lines(text).unwrap_or_default() {
+            active.push(Decoration {
+                line,
+                style,
+                color,
+                thickness,
+            });
+        }
+    }
+    if active.is_empty() {
+        values.remove(ACTIVE_DECORATIONS);
+    } else {
+        values.insert(ACTIVE_DECORATIONS.to_string(), Value::Decorations(active));
+    }
 }
 
 fn is_current_color(value: Option<&Value>) -> bool {
@@ -788,6 +864,13 @@ impl<'a> StyledNode<'a> {
 
     pub fn order(&self) -> i32 {
         self.number("order", 0.0) as i32
+    }
+
+    pub fn decorations(&self) -> &[Decoration] {
+        match self.value(ACTIVE_DECORATIONS) {
+            Some(Value::Decorations(list)) => list,
+            _ => &[],
+        }
     }
 
     pub fn box_shadows(&self) -> &[Shadow] {

@@ -4,6 +4,7 @@ pub mod calc;
 pub mod color;
 mod composite;
 pub mod css;
+pub mod decoration;
 pub mod dom;
 pub mod entities;
 pub mod flex;

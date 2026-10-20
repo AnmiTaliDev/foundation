@@ -2,6 +2,7 @@
 
 use crate::calc::{self, Linear};
 use crate::color::{self, Rgba};
+use crate::decoration::{self, Decoration};
 use crate::gradient::{self, Gradient};
 use crate::gridspec::{self, Line, TrackList};
 use crate::media::MediaList;
@@ -78,6 +79,7 @@ pub enum Value {
     GridLine(Line),
     Areas(Vec<Vec<String>>),
     Shadows(Vec<Shadow>),
+    Decorations(Vec<Decoration>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -755,6 +757,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "gap" {
         return expand_gap(value);
     }
+    if let Some(declarations) = expand_text_decoration(&name, value) {
+        return declarations;
+    }
     if let Some(declarations) = expand_radius(&name, value) {
         return declarations;
     }
@@ -1389,6 +1394,87 @@ fn expand_flex_flow(text: &str) -> Vec<Declaration> {
         }
     }
     declarations
+}
+
+fn decoration_color(text: &str) -> Option<Value> {
+    match parse_value(text) {
+        Some(value @ (Value::Color(_) | Value::Rgba(..))) => Some(value),
+        Some(Value::Keyword(keyword)) if keyword == "currentcolor" => Some(Value::Keyword(keyword)),
+        _ => None,
+    }
+}
+
+fn decoration_thickness(text: &str) -> Option<Value> {
+    match parse_value(text) {
+        Some(value @ (Value::Length(_) | Value::Em(_))) => Some(value),
+        Some(Value::Keyword(keyword)) if keyword == "auto" || keyword == "from-font" => {
+            Some(Value::Keyword("auto".to_string()))
+        }
+        _ => None,
+    }
+}
+
+fn expand_text_decoration(name: &str, value: &str) -> Option<Vec<Declaration>> {
+    match name {
+        "text-decoration-line" => {
+            let lowered = value.to_ascii_lowercase();
+            Some(match decoration::parse_lines(&lowered) {
+                Some(_) => vec![declaration(name, Value::Keyword(lowered))],
+                None => Vec::new(),
+            })
+        }
+        "text-decoration-style" => {
+            let lowered = value.to_ascii_lowercase();
+            Some(match decoration::parse_style(&lowered) {
+                Some(_) => vec![declaration(name, Value::Keyword(lowered))],
+                None => Vec::new(),
+            })
+        }
+        "text-decoration-color" => Some(
+            decoration_color(value)
+                .map(|value| vec![declaration(name, value)])
+                .unwrap_or_default(),
+        ),
+        "text-decoration-thickness" => Some(
+            decoration_thickness(value)
+                .map(|value| vec![declaration(name, value)])
+                .unwrap_or_default(),
+        ),
+        "text-decoration" => {
+            let mut lines = Vec::new();
+            let mut style = "solid".to_string();
+            let mut color = Value::Keyword("currentcolor".to_string());
+            let mut thickness = Value::Keyword("auto".to_string());
+            for token in split_values(value) {
+                let lowered = token.to_ascii_lowercase();
+                if matches!(lowered.as_str(), "underline" | "overline" | "line-through") {
+                    lines.push(lowered);
+                } else if lowered == "none" {
+                    lines.clear();
+                } else if decoration::parse_style(&lowered).is_some() {
+                    style = lowered;
+                } else if let Some(parsed) = decoration_color(token) {
+                    color = parsed;
+                } else if let Some(parsed) = decoration_thickness(token) {
+                    thickness = parsed;
+                } else {
+                    return Some(Vec::new());
+                }
+            }
+            let line = if lines.is_empty() {
+                "none".to_string()
+            } else {
+                lines.join(" ")
+            };
+            Some(vec![
+                declaration("text-decoration-line", Value::Keyword(line)),
+                declaration("text-decoration-style", Value::Keyword(style)),
+                declaration("text-decoration-color", color),
+                declaration("text-decoration-thickness", thickness),
+            ])
+        }
+        _ => None,
+    }
 }
 
 const CORNERS: [&str; 4] = [

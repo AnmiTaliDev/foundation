@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use crate::css::Color;
+use crate::decoration::{Decoration, Line, LineStyle};
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
@@ -20,6 +21,7 @@ pub struct Run<'a> {
     pub bold: bool,
     pub italic: bool,
     pub white_space: WhiteSpace,
+    pub decorations: &'a [Decoration],
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +106,14 @@ pub struct Fragment {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RuleFragment {
+    pub rect: Rect,
+    pub color: Color,
+    pub alpha: u8,
+    pub over_text: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct InlineBoxFragment {
     pub rect: Rect,
     pub background: Option<Color>,
@@ -123,6 +133,7 @@ pub struct Lines {
     pub images: Vec<ImageFragment>,
     pub boxes: Vec<InlineBoxFragment>,
     pub blocks: Vec<PlacedBlock>,
+    pub rules: Vec<RuleFragment>,
     pub height: f32,
 }
 
@@ -574,7 +585,96 @@ fn finish_line(
         }
     }
     push_boxes(line, origin, baseline, fonts, lines);
+    push_rules(line, origin, baseline, fonts, lines);
     above + below
+}
+
+struct Span {
+    decoration: Decoration,
+    last_word: usize,
+    x0: f32,
+    x1: f32,
+    face: usize,
+    font_size: f32,
+}
+
+fn push_rules(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
+    let mut spans: Vec<Span> = Vec::new();
+    for (index, placed) in line.iter().enumerate() {
+        let Piece::Text { text, run, face } = &placed.word.piece else {
+            continue;
+        };
+        let x0 = origin + placed.offset + placed.word.lead();
+        let x1 = x0 + fonts.width(*face, text, run.font_size);
+        for decoration in run.decorations {
+            let joined = spans.iter_mut().find(|span| {
+                span.decoration == *decoration
+                    && span.font_size == run.font_size
+                    && span.last_word + 1 == index
+            });
+            match joined {
+                Some(span) => {
+                    span.x1 = x1;
+                    span.last_word = index;
+                }
+                None => spans.push(Span {
+                    decoration: *decoration,
+                    last_word: index,
+                    x0,
+                    x1,
+                    face: *face,
+                    font_size: run.font_size,
+                }),
+            }
+        }
+    }
+    for span in &spans {
+        emit_rules(span, baseline, fonts, lines);
+    }
+}
+
+fn emit_rules(span: &Span, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
+    let size = span.font_size;
+    let decoration = &span.decoration;
+    let thickness = decoration.thickness.unwrap_or(size / 16.0).round().max(1.0);
+    let top = match decoration.line {
+        Line::Underline => baseline + size * 0.1,
+        Line::Overline => baseline - fonts.ascent(span.face, size),
+        Line::LineThrough => baseline - size * 0.3 - thickness / 2.0,
+    }
+    .round();
+    let width = span.x1 - span.x0;
+    let over_text = decoration.line == Line::LineThrough;
+    let mut push = |x: f32, y: f32, width: f32| {
+        lines.rules.push(RuleFragment {
+            rect: Rect {
+                x,
+                y,
+                width,
+                height: thickness,
+            },
+            color: decoration.color.color,
+            alpha: decoration.color.alpha,
+            over_text,
+        });
+    };
+    let (period, dash) = match decoration.style {
+        LineStyle::Dotted => (thickness * 2.0, thickness),
+        LineStyle::Dashed => (thickness * 5.0, thickness * 3.0),
+        LineStyle::Solid | LineStyle::Double => (0.0, 0.0),
+    };
+    if period > 0.0 && width / period < 2000.0 {
+        let mut x = span.x0;
+        while x < span.x1 {
+            push(x, top, dash.min(span.x1 - x));
+            x += period;
+        }
+        return;
+    }
+    push(span.x0, top, width);
+    if decoration.style == LineStyle::Double {
+        push(span.x0, top + thickness * 2.0, width);
+    }
 }
 
 fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
