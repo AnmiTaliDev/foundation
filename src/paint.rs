@@ -1026,9 +1026,42 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
+    let layers = style.background_layers();
+    if let Some(Rgba { color, alpha }) = style.rgba("background-color") {
+        if alpha > 0 {
+            with_clip(layout_box, style, layers - 1, list, |clip, list| {
+                list.push(DisplayCommand::Rect(SolidRect {
+                    color,
+                    alpha,
+                    rect: clip,
+                }));
+            });
+        }
+    }
+    for index in (0..layers).rev() {
+        let picture = layout_box
+            .background_pictures
+            .get(index)
+            .and_then(Option::as_ref);
+        if style.background_gradient(index).is_none() && picture.is_none() {
+            continue;
+        }
+        with_clip(layout_box, style, index, list, |clip, list| {
+            push_layer(layout_box, style, index, clip, list);
+        });
+    }
+}
+
+fn with_clip(
+    layout_box: &LayoutBox,
+    style: &StyledNode,
+    index: usize,
+    list: &mut Vec<DisplayCommand>,
+    paint: impl FnOnce(Rect, &mut Vec<DisplayCommand>),
+) {
     let d = &layout_box.dimensions;
     let border = [d.border.top, d.border.right, d.border.bottom, d.border.left];
-    let (clip, inset) = match style.background_clip() {
+    let (clip, inset) = match style.background_clip(index) {
         BackgroundBox::Border => (d.border_box(), [0.0; 4]),
         BackgroundBox::Padding => (d.padding_box(), border),
         BackgroundBox::Content => (
@@ -1043,7 +1076,7 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     };
     let radii = box_radii(layout_box, style).shrink(inset);
     if radii.is_zero() {
-        push_background(layout_box, style, clip, list);
+        paint(clip, list);
         return;
     }
     list.push(DisplayCommand::BeginRound(Round {
@@ -1051,45 +1084,41 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
         radii,
         inverted: false,
     }));
-    push_background(layout_box, style, clip, list);
+    paint(clip, list);
     list.push(DisplayCommand::EndGroup);
 }
 
-fn background_origin(layout_box: &LayoutBox, style: &StyledNode) -> Rect {
-    match style.background_origin() {
+fn background_origin(layout_box: &LayoutBox, style: &StyledNode, index: usize) -> Rect {
+    match style.background_origin(index) {
         BackgroundBox::Border => layout_box.dimensions.border_box(),
         BackgroundBox::Padding => layout_box.dimensions.padding_box(),
         BackgroundBox::Content => layout_box.dimensions.content,
     }
 }
 
-fn push_background(
+fn push_layer(
     layout_box: &LayoutBox,
     style: &StyledNode,
+    index: usize,
     clip: Rect,
     list: &mut Vec<DisplayCommand>,
 ) {
-    if let Some(Rgba { color, alpha }) = style.rgba("background-color") {
-        if alpha > 0 {
-            list.push(DisplayCommand::Rect(SolidRect {
-                color,
-                alpha,
-                rect: clip,
-            }));
-        }
-    }
-    if let Some(gradient) = style.background_gradient() {
-        let origin = background_origin(layout_box, style);
+    if let Some(gradient) = style.background_gradient(index) {
+        let origin = background_origin(layout_box, style, index);
         let area = (origin.width, origin.height);
-        let (width, height) = style.background_size(area, area);
-        let (repeat_x, repeat_y) = style.background_repeat();
+        let (width, height) = style.background_size(index, area, area);
+        let (repeat_x, repeat_y) = style.background_repeat(index);
         list.push(DisplayCommand::GradientTiles(GradientTiles {
             clip,
             tile: Rect {
                 x: origin.x
-                    + style.background_offset("background-position-x", origin.width - width),
+                    + style.background_offset("background-position-x", index, origin.width - width),
                 y: origin.y
-                    + style.background_offset("background-position-y", origin.height - height),
+                    + style.background_offset(
+                        "background-position-y",
+                        index,
+                        origin.height - height,
+                    ),
                 width,
                 height,
             },
@@ -1099,17 +1128,20 @@ fn push_background(
             font_size: style.font_size(),
         }));
     }
-    let Some(picture) = &layout_box.background_picture else {
+    let Some(Some(picture)) = layout_box.background_pictures.get(index) else {
         return;
     };
-    let origin = background_origin(layout_box, style);
+    let origin = background_origin(layout_box, style, index);
     let (width, height) = style.background_size(
+        index,
         (origin.width, origin.height),
         (picture.width as f32, picture.height as f32),
     );
-    let (repeat_x, repeat_y) = style.background_repeat();
-    let x = origin.x + style.background_offset("background-position-x", origin.width - width);
-    let y = origin.y + style.background_offset("background-position-y", origin.height - height);
+    let (repeat_x, repeat_y) = style.background_repeat(index);
+    let x =
+        origin.x + style.background_offset("background-position-x", index, origin.width - width);
+    let y =
+        origin.y + style.background_offset("background-position-y", index, origin.height - height);
     list.push(DisplayCommand::Tiles(Tiles {
         clip,
         tile: Rect {

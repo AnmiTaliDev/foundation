@@ -1314,15 +1314,36 @@ impl<'a> StyledNode<'a> {
         matches!(self.keyword("font-style"), Some("italic") | Some("oblique"))
     }
 
-    pub fn background_image(&self) -> Option<&str> {
+    pub fn background_layers(&self) -> usize {
         match self.value("background-image") {
+            Some(Value::List(items)) => items.len(),
+            _ => 1,
+        }
+    }
+
+    fn layer(&self, name: &str, index: usize) -> Option<&Value> {
+        match self.value(name) {
+            Some(Value::List(items)) if !items.is_empty() => Some(&items[index % items.len()]),
+            value => value,
+        }
+    }
+
+    fn layer_keyword(&self, name: &str, index: usize) -> Option<&str> {
+        match self.layer(name, index) {
+            Some(Value::Keyword(keyword)) => Some(keyword.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn background_image(&self, index: usize) -> Option<&str> {
+        match self.layer("background-image", index) {
             Some(Value::Url(url)) => Some(url),
             _ => None,
         }
     }
 
-    pub fn background_repeat(&self) -> (bool, bool) {
-        match self.keyword("background-repeat") {
+    pub fn background_repeat(&self, index: usize) -> (bool, bool) {
+        match self.layer_keyword("background-repeat", index) {
             Some("repeat-x") => (true, false),
             Some("repeat-y") => (false, true),
             Some("no-repeat") => (false, false),
@@ -1330,21 +1351,26 @@ impl<'a> StyledNode<'a> {
         }
     }
 
-    pub fn background_clip(&self) -> BackgroundBox {
-        background_box(self.keyword("background-clip"))
+    pub fn background_clip(&self, index: usize) -> BackgroundBox {
+        background_box(self.layer_keyword("background-clip", index))
     }
 
-    pub fn background_origin(&self) -> BackgroundBox {
-        match self.keyword("background-origin") {
+    pub fn background_origin(&self, index: usize) -> BackgroundBox {
+        match self.layer_keyword("background-origin", index) {
             None => BackgroundBox::Padding,
             keyword => background_box(keyword),
         }
     }
 
-    pub fn background_size(&self, area: (f32, f32), natural: (f32, f32)) -> (f32, f32) {
+    pub fn background_size(
+        &self,
+        index: usize,
+        area: (f32, f32),
+        natural: (f32, f32),
+    ) -> (f32, f32) {
         let (area_width, area_height) = area;
         let (natural_width, natural_height) = natural;
-        let scale = match self.keyword("background-size") {
+        let scale = match self.layer_keyword("background-size", index) {
             Some("cover") => Some((area_width / natural_width).max(area_height / natural_height)),
             Some("contain") => Some((area_width / natural_width).min(area_height / natural_height)),
             _ => None,
@@ -1352,8 +1378,16 @@ impl<'a> StyledNode<'a> {
         if let Some(scale) = scale {
             return (natural_width * scale, natural_height * scale);
         }
-        let width = self.length_or_auto("background-size-width", None, Some(area_width));
-        let height = self.length_or_auto("background-size-height", None, Some(area_height));
+        let width = self.length_from(
+            self.layer("background-size-width", index),
+            None,
+            Some(area_width),
+        );
+        let height = self.length_from(
+            self.layer("background-size-height", index),
+            None,
+            Some(area_height),
+        );
         match (width, height) {
             (Some(width), Some(height)) => (width, height),
             (Some(width), None) => (width, natural_height * width / natural_width),
@@ -1362,10 +1396,10 @@ impl<'a> StyledNode<'a> {
         }
     }
 
-    pub fn background_offset(&self, name: &str, free: f32) -> f32 {
-        match self.value(name) {
+    pub fn background_offset(&self, name: &str, index: usize, free: f32) -> f32 {
+        match self.layer(name, index) {
             Some(Value::Percent(percent)) => percent / 100.0 * free,
-            _ => self.px(name, 0.0),
+            value => self.length_from(value, Some(0.0), Some(0.0)).unwrap_or(0.0),
         }
     }
 
@@ -1391,8 +1425,8 @@ impl<'a> StyledNode<'a> {
         self.rgba("color").map_or(255, |rgba| rgba.alpha)
     }
 
-    pub fn background_gradient(&self) -> Option<&Gradient> {
-        match self.value("background-image") {
+    pub fn background_gradient(&self, index: usize) -> Option<&Gradient> {
+        match self.layer("background-image", index) {
             Some(Value::Gradient(gradient)) => Some(gradient),
             _ => None,
         }
@@ -1404,7 +1438,16 @@ impl<'a> StyledNode<'a> {
         default: Option<f32>,
         percent_base: Option<f32>,
     ) -> Option<f32> {
-        match self.value(name) {
+        self.length_from(self.value(name), default, percent_base)
+    }
+
+    fn length_from(
+        &self,
+        value: Option<&Value>,
+        default: Option<f32>,
+        percent_base: Option<f32>,
+    ) -> Option<f32> {
+        match value {
             Some(Value::Length(px)) => Some(*px),
             Some(Value::Em(em)) => Some(em * self.font_size()),
             Some(Value::Percent(percent)) => percent_base.map(|base| percent / 100.0 * base),

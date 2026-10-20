@@ -71,6 +71,25 @@ pub enum Value {
     Content(Vec<generated::Part>),
     Counters(Vec<(String, i32)>),
     Quotes(Vec<(String, String)>),
+    List(Vec<Value>),
+}
+
+impl Value {
+    pub fn urls(&self) -> Vec<&String> {
+        match self {
+            Value::Url(url) => vec![url],
+            Value::List(items) => items.iter().flat_map(Value::urls).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn urls_mut(&mut self) -> Vec<&mut String> {
+        match self {
+            Value::Url(url) => vec![url],
+            Value::List(items) => items.iter_mut().flat_map(Value::urls_mut).collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -820,17 +839,41 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     if name == "overflow" {
         return expand_overflow(value);
     }
-    if name == "background" {
-        let layers = gradient::split_top_level(value);
-        let mut declarations = expand_background(layers[0]);
-        if layers.len() > 1 {
-            declarations.retain(|d| d.name != "background-color");
-            declarations.extend(
-                expand_background(layers[layers.len() - 1])
-                    .into_iter()
-                    .filter(|d| d.name == "background-color"),
-            );
+    if LAYERED.contains(&name.as_str()) {
+        let parts = gradient::split_top_level(value);
+        if parts.len() > 1 {
+            let mut layers = Vec::new();
+            for part in parts {
+                let declarations = parse_declaration(&format!("{}: {}", name, part));
+                if declarations.is_empty() {
+                    return Vec::new();
+                }
+                layers.push(declarations);
+            }
+            return merge_layers(layers);
         }
+    }
+    if name == "background" {
+        let parts = gradient::split_top_level(value);
+        if parts.len() == 1 {
+            return expand_background(parts[0]);
+        }
+        let layers: Vec<Vec<Declaration>> = parts
+            .iter()
+            .map(|part| {
+                let mut declarations = expand_background(part);
+                declarations.retain(|d| d.name != "background-color");
+                if !declarations.iter().any(|d| d.name == "background-image") {
+                    declarations.push(declaration("background-image", none()));
+                }
+                declarations
+            })
+            .collect();
+        let color = expand_background(parts[parts.len() - 1])
+            .into_iter()
+            .filter(|d| d.name == "background-color");
+        let mut declarations = merge_layers(layers);
+        declarations.extend(color);
         return declarations;
     }
     if name == "background-image" {
@@ -1023,6 +1066,59 @@ fn expand_background(text: &str) -> Vec<Declaration> {
         }
     }
     declarations
+}
+
+const LAYERED: [&str; 6] = [
+    "background-image",
+    "background-repeat",
+    "background-position",
+    "background-size",
+    "background-origin",
+    "background-clip",
+];
+
+fn none() -> Value {
+    Value::Keyword("none".to_string())
+}
+
+fn layer_default(name: &str) -> Value {
+    let keyword = |text: &str| Value::Keyword(text.to_string());
+    match name {
+        "background-image" => none(),
+        "background-repeat" => keyword("repeat"),
+        "background-position-x" | "background-position-y" => Value::Percent(0.0),
+        "background-size" => keyword("explicit"),
+        "background-size-width" | "background-size-height" => keyword("auto"),
+        "background-origin" => keyword("padding-box"),
+        _ => keyword("border-box"),
+    }
+}
+
+fn merge_layers(layers: Vec<Vec<Declaration>>) -> Vec<Declaration> {
+    let mut names: Vec<String> = Vec::new();
+    for declaration in layers.iter().flatten() {
+        if !names.contains(&declaration.name) {
+            names.push(declaration.name.clone());
+        }
+    }
+    names
+        .into_iter()
+        .map(|name| {
+            let values = layers
+                .iter()
+                .map(|layer| {
+                    layer
+                        .iter()
+                        .find(|d| d.name == name)
+                        .map_or_else(|| layer_default(&name), |d| d.value.clone())
+                })
+                .collect();
+            Declaration {
+                name,
+                value: Value::List(values),
+            }
+        })
+        .collect()
 }
 
 fn is_box_keyword(keyword: &str) -> bool {

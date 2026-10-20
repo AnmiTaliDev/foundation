@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::text::Fonts;
 
-use crate::css::{self, FontFace, Rule, Stylesheet, Value};
+use crate::css::{self, FontFace, Rule, Stylesheet};
 use crate::dom::{Node, NodeType};
 use crate::layout::{self, ImageMap};
 use crate::loader;
@@ -80,9 +80,7 @@ impl Page {
         collect_image_sources(&document, &mut sources);
         for rule in &sheets.rules {
             for declaration in rule.declarations.iter().chain(&rule.important) {
-                if let Value::Url(url) = &declaration.value {
-                    sources.push(url.clone());
-                }
+                sources.extend(declaration.value.urls().into_iter().cloned());
             }
         }
         for src in sources {
@@ -234,7 +232,7 @@ fn add_stylesheet(text: &str, base: &Location, depth: usize, sheets: &mut Sheets
     let mut parsed = css::parse(text);
     for rule in &mut parsed.rules {
         for declaration in rule.declarations.iter_mut().chain(&mut rule.important) {
-            if let Value::Url(url) = &mut declaration.value {
+            for url in declaration.value.urls_mut() {
                 if let Ok(location) = base.resolve(url) {
                     *url = location.to_string();
                 }
@@ -327,9 +325,7 @@ fn collect_image_sources(node: &Node, sources: &mut Vec<String>) {
         }
         if let Some(inline) = element.attributes.get("style") {
             for declaration in css::parse_declarations(inline) {
-                if let Value::Url(url) = declaration.value {
-                    sources.push(url);
-                }
+                sources.extend(declaration.value.urls().into_iter().cloned());
             }
         }
     }

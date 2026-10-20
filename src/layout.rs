@@ -67,7 +67,7 @@ pub struct LayoutBox<'a> {
     pub images: Vec<ImageFragment>,
     pub inline_boxes: Vec<InlineBoxFragment>,
     pub rules: Vec<RuleFragment>,
-    pub background_picture: Option<Rc<Picture>>,
+    pub background_pictures: Vec<Option<Rc<Picture>>>,
     pub(crate) marker: Option<String>,
     pub(crate) suppressed_borders: [bool; 4],
     pub(crate) forced_width: Option<f32>,
@@ -138,7 +138,7 @@ impl<'a> LayoutBox<'a> {
             images: Vec::new(),
             inline_boxes: Vec::new(),
             rules: Vec::new(),
-            background_picture: None,
+            background_pictures: Vec::new(),
             marker: None,
             suppressed_borders: [false; 4],
             forced_width: None,
@@ -190,9 +190,13 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
     }
     flush_items(align, &mut flow);
     let mut layout_box = LayoutBox::new(BoxKind::Block(style), flow.children);
-    layout_box.background_picture = style
-        .background_image()
-        .and_then(|url| images.get(url).cloned());
+    layout_box.background_pictures = (0..style.background_layers())
+        .map(|index| {
+            style
+                .background_image(index)
+                .and_then(|url| images.get(url).cloned())
+        })
+        .collect();
     layout_box
 }
 
