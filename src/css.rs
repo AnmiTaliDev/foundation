@@ -115,10 +115,18 @@ const BORDER_WIDTH_PROPERTIES: [&str; 4] = [
     "border-left-width",
 ];
 
-const BOX_SHORTHANDS: [(&str, [&str; 4]); 3] = [
+const BORDER_STYLE_PROPERTIES: [&str; 4] = [
+    "border-top-style",
+    "border-right-style",
+    "border-bottom-style",
+    "border-left-style",
+];
+
+const BOX_SHORTHANDS: [(&str, [&str; 4]); 4] = [
     ("margin", MARGIN_PROPERTIES),
     ("padding", PADDING_PROPERTIES),
     ("border-width", BORDER_WIDTH_PROPERTIES),
+    ("border-style", BORDER_STYLE_PROPERTIES),
 ];
 
 const FONT_SIZE_KEYWORDS: [(&str, f32); 7] = [
@@ -674,8 +682,8 @@ fn expand_outline(text: &str) -> Vec<Declaration> {
             Some(Value::Keyword(keyword)) => match keyword.as_str() {
                 "currentcolor" => color = Value::Keyword(keyword),
                 "thin" | "medium" | "thick" => width = Value::Keyword(keyword),
-                "none" | "hidden" | "auto" | "solid" | "dashed" | "dotted" | "double"
-                | "groove" | "ridge" | "inset" | "outset" => style = Value::Keyword(keyword),
+                "auto" => style = Value::Keyword(keyword),
+                _ if is_line_style(&keyword) => style = Value::Keyword(keyword),
                 _ => return Vec::new(),
             },
             _ => return Vec::new(),
@@ -964,6 +972,14 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
         if let Some(size) = parse_font_size(value) {
             return vec![Declaration { name, value: size }];
         }
+    }
+
+    if (name == "border-style" || BORDER_STYLE_PROPERTIES.contains(&name.as_str()))
+        && !split_values(value)
+            .iter()
+            .all(|token| is_line_style(&token.to_ascii_lowercase()))
+    {
+        return Vec::new();
     }
 
     for (shorthand, longhands) in BOX_SHORTHANDS {
@@ -1809,8 +1825,12 @@ fn expand_border(text: &str) -> Vec<Declaration> {
             Some(width @ (Value::Length(_) | Value::Em(_))) => {
                 push_border_widths(&mut declarations, width);
             }
-            Some(Value::Keyword(keyword)) if keyword == "none" => {
+            Some(Value::Keyword(keyword)) if keyword == "none" || keyword == "hidden" => {
                 push_border_widths(&mut declarations, Value::Length(0.0));
+                push_border_styles(&mut declarations, keyword);
+            }
+            Some(Value::Keyword(keyword)) if is_line_style(&keyword) => {
+                push_border_styles(&mut declarations, keyword);
             }
             Some(Value::Keyword(keyword)) if keyword == "currentcolor" => {
                 declarations.push(Declaration {
@@ -1823,6 +1843,28 @@ fn expand_border(text: &str) -> Vec<Declaration> {
         }
     }
     declarations
+}
+
+fn is_line_style(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "none"
+            | "hidden"
+            | "solid"
+            | "dashed"
+            | "dotted"
+            | "double"
+            | "groove"
+            | "ridge"
+            | "inset"
+            | "outset"
+    )
+}
+
+fn push_border_styles(declarations: &mut Vec<Declaration>, keyword: String) {
+    for name in BORDER_STYLE_PROPERTIES {
+        declarations.push(declaration(name, Value::Keyword(keyword.clone())));
+    }
 }
 
 fn push_border_widths(declarations: &mut Vec<Declaration>, width: Value) {

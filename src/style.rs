@@ -70,6 +70,13 @@ const INHERITED_PROPERTIES: [&str; 16] = [
     "font-style",
 ];
 
+const BORDER_STYLES: [&str; 4] = [
+    "border-top-style",
+    "border-right-style",
+    "border-bottom-style",
+    "border-left-style",
+];
+
 const BORDER_WIDTHS: [&str; 4] = [
     "border-top-width",
     "border-right-width",
@@ -205,6 +212,23 @@ pub enum TextAlign {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StrokeStyle {
+    Solid,
+    Dashed,
+    Dotted,
+    Double,
+}
+
+fn stroke_style(keyword: Option<&str>) -> StrokeStyle {
+    match keyword {
+        Some("dashed") => StrokeStyle::Dashed,
+        Some("dotted") => StrokeStyle::Dotted,
+        Some("double") => StrokeStyle::Double,
+        _ => StrokeStyle::Solid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BackgroundBox {
     Border,
     Padding,
@@ -221,6 +245,7 @@ fn background_box(keyword: Option<&str>) -> BackgroundBox {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Outline {
+    pub style: StrokeStyle,
     pub width: f32,
     pub offset: f32,
     pub color: Rgba,
@@ -491,6 +516,7 @@ fn compute(
     resolve_font_size(values, parent);
     resolve_spacing(values);
     resolve_line_height(values);
+    resolve_border_styles(values);
     resolve_current_color(values, parent);
     resolve_decorations(values, parent);
 }
@@ -680,6 +706,17 @@ fn resolve_decorations(values: &mut PropertyMap, parent: &PropertyMap) {
 
 fn is_current_color(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Keyword(keyword)) if keyword == "currentcolor")
+}
+
+fn resolve_border_styles(values: &mut PropertyMap) {
+    for (style, width) in BORDER_STYLES.iter().zip(BORDER_WIDTHS) {
+        if matches!(
+            values.get(*style),
+            Some(Value::Keyword(keyword)) if keyword == "none" || keyword == "hidden"
+        ) {
+            values.insert(width.to_string(), Value::Length(0.0));
+        }
+    }
 }
 
 fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
@@ -903,6 +940,10 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn border_style(&self, side: usize) -> StrokeStyle {
+        stroke_style(self.keyword(BORDER_STYLES[side]))
+    }
+
     pub fn outline(&self) -> Option<Outline> {
         if matches!(
             self.keyword("outline-style"),
@@ -928,6 +969,7 @@ impl<'a> StyledNode<'a> {
             alpha: self.text_alpha(),
         });
         Some(Outline {
+            style: stroke_style(self.keyword("outline-style")),
             width,
             offset,
             color,

@@ -14,7 +14,7 @@ use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
 use crate::radius::{Radii, Round};
 use crate::shadow;
-use crate::style::{BackgroundBox, Content, Position, StyledNode};
+use crate::style::{BackgroundBox, Content, Position, StrokeStyle, StyledNode};
 
 const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
@@ -1208,8 +1208,11 @@ fn outline_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let outer = inflate(outline.offset + outline.width);
     let radii = box_radii(layout_box, style);
     if radii.is_zero() {
-        for rect in border_edges(&outer, [outline.width; 4]) {
-            list.push(DisplayCommand::Rect(SolidRect { color, alpha, rect }));
+        for (side, rect) in border_edges(&outer, [outline.width; 4])
+            .into_iter()
+            .enumerate()
+        {
+            push_edge(&mut list, rect, side % 2 == 0, outline.style, color, alpha);
         }
         return list;
     }
@@ -1266,7 +1269,67 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
         list.push(DisplayCommand::EndGroup);
         return;
     }
-    for rect in border_edges(&d.border_box(), widths) {
-        list.push(DisplayCommand::Rect(SolidRect { color, alpha, rect }));
+    for (side, rect) in border_edges(&d.border_box(), widths)
+        .into_iter()
+        .enumerate()
+    {
+        push_edge(
+            list,
+            rect,
+            side % 2 == 0,
+            style.border_style(side),
+            color,
+            alpha,
+        );
+    }
+}
+
+fn push_edge(
+    list: &mut Vec<DisplayCommand>,
+    rect: Rect,
+    horizontal: bool,
+    style: StrokeStyle,
+    color: Color,
+    alpha: u8,
+) {
+    let thickness = if horizontal { rect.height } else { rect.width };
+    let length = if horizontal { rect.width } else { rect.height };
+    let mut piece = |offset: f32, size: f32, start: f32, depth: f32| {
+        let (x, y, width, height) = if horizontal {
+            (rect.x + offset, rect.y + start, size, depth)
+        } else {
+            (rect.x + start, rect.y + offset, depth, size)
+        };
+        list.push(DisplayCommand::Rect(SolidRect {
+            color,
+            alpha,
+            rect: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+        }));
+    };
+    match style {
+        StrokeStyle::Dashed | StrokeStyle::Dotted if thickness > 0.0 => {
+            let dash = if style == StrokeStyle::Dashed {
+                thickness * 3.0
+            } else {
+                thickness
+            };
+            let step = dash * 2.0;
+            let mut offset = 0.0;
+            while offset < length {
+                piece(offset, dash.min(length - offset), 0.0, thickness);
+                offset += step;
+            }
+        }
+        StrokeStyle::Double if thickness >= 3.0 => {
+            let band = (thickness / 3.0).round();
+            piece(0.0, length, 0.0, band);
+            piece(0.0, length, thickness - band, band);
+        }
+        _ => piece(0.0, length, 0.0, thickness),
     }
 }

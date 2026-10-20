@@ -408,7 +408,7 @@ fn combinator_selectors_parse_and_sum_specificity() {
 fn border_shorthand_sets_width_and_color() {
     let sheet = css::parse("div { border: 2px solid red } p { border: none }");
     let div = &sheet.rules[0].declarations;
-    assert_eq!(div.len(), 5);
+    assert_eq!(div.len(), 9);
     assert!(div
         .iter()
         .any(|d| d.name == "border-color" && d.value == Value::Color(RED)));
@@ -417,8 +417,15 @@ fn border_shorthand_sets_width_and_color() {
         .filter(|d| d.name.ends_with("-width"))
         .all(|d| d.value == Value::Length(2.0)));
     let p = &sheet.rules[1].declarations;
-    assert_eq!(p.len(), 4);
-    assert!(p.iter().all(|d| d.value == Value::Length(0.0)));
+    assert_eq!(p.len(), 8);
+    assert!(p
+        .iter()
+        .filter(|d| d.name.ends_with("-width"))
+        .all(|d| d.value == Value::Length(0.0)));
+    assert!(p
+        .iter()
+        .filter(|d| d.name.ends_with("-style"))
+        .all(|d| d.value == Value::Keyword("none".to_string())));
 }
 
 #[test]
