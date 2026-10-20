@@ -119,7 +119,7 @@ fn never_matching_selector_keeps_the_rest_of_its_list() {
 
 #[test]
 fn unknown_pseudo_class_drops_the_rule() {
-    let head = "p:first-child { color: red }";
+    let head = "p::before { color: red }";
     assert_eq!(color_of(head, "<p>text</p>", "text"), BLACK);
 }
 

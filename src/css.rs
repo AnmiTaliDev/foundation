@@ -6,9 +6,12 @@ use crate::decoration::{self, Decoration};
 use crate::gradient::{self, Gradient};
 use crate::gridspec::{self, Line, TrackList};
 use crate::media::MediaList;
+use crate::selector;
 use crate::shadow::{self, Shadow};
 use crate::supports;
 use crate::transform::{self, Function};
+
+pub use crate::selector::{Combinator, Pseudo, Selector, Specificity};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
@@ -33,29 +36,6 @@ pub struct Rule {
     pub media: Vec<MediaList>,
     pub layer: Option<String>,
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Selector {
-    pub tag_name: Option<String>,
-    pub id: Option<String>,
-    pub classes: Vec<String>,
-    pub pseudo: Vec<Pseudo>,
-    pub parent: Option<(Combinator, Box<Selector>)>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Pseudo {
-    Link,
-    Never,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Combinator {
-    Descendant,
-    Child,
-}
-
-pub type Specificity = (usize, usize, usize);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
@@ -278,23 +258,6 @@ const NAMED_COLORS: [(&str, u32); 148] = [
     ("yellow", 0xFFFF00),
     ("yellowgreen", 0x9ACD32),
 ];
-
-impl Selector {
-    pub fn specificity(&self) -> Specificity {
-        let mut specificity = (
-            usize::from(self.id.is_some()),
-            self.classes.len() + self.pseudo.len(),
-            usize::from(self.tag_name.is_some()),
-        );
-        if let Some((_, parent)) = &self.parent {
-            let (ids, classes, tags) = parent.specificity();
-            specificity.0 += ids;
-            specificity.1 += classes;
-            specificity.2 += tags;
-        }
-        specificity
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
@@ -609,10 +572,7 @@ fn strip_comments(source: &str) -> String {
 }
 
 fn parse_rule(selector_text: &str, block: &str) -> Option<Rule> {
-    let mut selectors = Vec::new();
-    for part in selector_text.split(',') {
-        selectors.push(parse_selector(part.trim())?);
-    }
+    let selectors = selector::parse_list(selector_text)?;
     let block = parse_declaration_block(block);
     Some(Rule {
         selectors,
@@ -664,86 +624,6 @@ fn split_important(item: &str) -> (&str, bool) {
 
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
-}
-
-fn take_ident(text: &str) -> &str {
-    let rest = text.trim_start_matches(is_ident_char);
-    &text[..text.len() - rest.len()]
-}
-
-fn parse_selector(text: &str) -> Option<Selector> {
-    let spaced = text.replace('>', " > ");
-    let mut result: Option<Selector> = None;
-    let mut combinator: Option<Combinator> = None;
-    for token in spaced.split_whitespace() {
-        if token == ">" {
-            if result.is_none() || combinator.is_some() {
-                return None;
-            }
-            combinator = Some(Combinator::Child);
-            continue;
-        }
-        let mut compound = parse_compound(token)?;
-        if let Some(left) = result {
-            let kind = combinator.take().unwrap_or(Combinator::Descendant);
-            compound.parent = Some((kind, Box::new(left)));
-        }
-        result = Some(compound);
-    }
-    if combinator.is_some() {
-        return None;
-    }
-    result
-}
-
-fn parse_compound(text: &str) -> Option<Selector> {
-    let mut selector = Selector {
-        tag_name: None,
-        id: None,
-        classes: Vec::new(),
-        pseudo: Vec::new(),
-        parent: None,
-    };
-    let mut rest = text;
-    if let Some(after_star) = rest.strip_prefix('*') {
-        rest = after_star;
-    } else {
-        let name = take_ident(rest);
-        if !name.is_empty() {
-            selector.tag_name = Some(name.to_ascii_lowercase());
-            rest = &rest[name.len()..];
-        }
-    }
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix('#') {
-            let id = take_ident(after);
-            if id.is_empty() {
-                return None;
-            }
-            selector.id = Some(id.to_string());
-            rest = &after[id.len()..];
-        } else if let Some(after) = rest.strip_prefix(':') {
-            let name = take_ident(after);
-            selector
-                .pseudo
-                .push(match name.to_ascii_lowercase().as_str() {
-                    "link" | "any-link" => Pseudo::Link,
-                    "visited" | "hover" | "active" | "focus" | "focus-within" | "focus-visible"
-                    | "target" => Pseudo::Never,
-                    _ => return None,
-                });
-            rest = &after[name.len()..];
-        } else {
-            let after = rest.strip_prefix('.')?;
-            let class = take_ident(after);
-            if class.is_empty() {
-                return None;
-            }
-            selector.classes.push(class.to_string());
-            rest = &after[class.len()..];
-        }
-    }
-    Some(selector)
 }
 
 pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {

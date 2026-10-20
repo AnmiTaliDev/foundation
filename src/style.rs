@@ -3,15 +3,14 @@
 use std::collections::HashMap;
 
 use crate::color::Rgba;
-use crate::css::{
-    self, Color, Combinator, Declaration, Pseudo, Rule, Selector, Specificity, Stylesheet, Value,
-};
+use crate::css::{self, Color, Declaration, Rule, Specificity, Stylesheet, Value};
 use crate::decoration::{self, Decoration, LineStyle};
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
 use crate::radius::Radii;
+use crate::selector::{self, Scope};
 use crate::shadow::Shadow;
 use crate::transform::{self, Matrix};
 
@@ -345,6 +344,8 @@ pub fn style_tree<'a>(
     match &root.node_type {
         NodeType::Element(_) => Some(style_node(
             root,
+            std::slice::from_ref(root),
+            0,
             &context,
             &PropertyMap::new(),
             &mut Vec::new(),
@@ -356,9 +357,11 @@ pub fn style_tree<'a>(
 
 fn style_node<'a>(
     node: &'a Node,
+    siblings: &'a [Node],
+    position: usize,
     context: &StyleContext,
     parent: &PropertyMap,
-    ancestors: &mut Vec<&'a ElementData>,
+    ancestors: &mut Vec<Scope<'a>>,
     root_font_size: f32,
 ) -> StyledNode<'a> {
     let mut inherited = PropertyMap::new();
@@ -377,7 +380,12 @@ fn style_node<'a>(
             children: Vec::new(),
         },
         NodeType::Element(element) => {
-            let mut values = specified_values(element, ancestors, context, inherited);
+            let scope = Scope {
+                element,
+                siblings,
+                position,
+            };
+            let mut values = specified_values(scope, ancestors, context, inherited);
             resolve_viewport_units(&mut values, context.viewport, root_font_size);
             resolve_font_size(&mut values, parent);
             resolve_spacing(&mut values);
@@ -389,11 +397,13 @@ fn style_node<'a>(
             } else {
                 root_font_size
             };
-            ancestors.push(element);
+            ancestors.push(scope);
             let mut children = Vec::new();
-            for child in &node.children {
+            for (index, child) in node.children.iter().enumerate() {
                 children.push(style_node(
                     child,
+                    &node.children,
+                    index,
                     context,
                     &values,
                     ancestors,
@@ -581,8 +591,8 @@ fn resolve_line_height(values: &mut PropertyMap) {
 type CascadeKey = (bool, usize, bool, Specificity);
 
 fn specified_values(
-    element: &ElementData,
-    ancestors: &[&ElementData],
+    scope: Scope,
+    ancestors: &[Scope],
     context: &StyleContext,
     inherited: PropertyMap,
 ) -> PropertyMap {
@@ -597,7 +607,7 @@ fn specified_values(
         {
             continue;
         }
-        let Some(specificity) = match_rule(element, ancestors, rule) else {
+        let Some(specificity) = match_rule(scope, ancestors, rule) else {
             continue;
         };
         let layer = rule
@@ -613,7 +623,8 @@ fn specified_values(
             entries.push(((true, important_rank, false, specificity), declaration));
         }
     }
-    let inline = element
+    let inline = scope
+        .element
         .attributes
         .get("style")
         .map(|text| css::parse_declaration_block(text))
@@ -633,14 +644,10 @@ fn specified_values(
     values
 }
 
-fn match_rule(
-    element: &ElementData,
-    ancestors: &[&ElementData],
-    rule: &Rule,
-) -> Option<Specificity> {
+fn match_rule(scope: Scope, ancestors: &[Scope], rule: &Rule) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in &rule.selectors {
-        if matches_selector(element, ancestors, selector) {
+        if selector::matches(scope, ancestors, selector) {
             let specificity = selector.specificity();
             if best.is_none_or(|current| specificity > current) {
                 best = Some(specificity);
@@ -648,59 +655,6 @@ fn match_rule(
         }
     }
     best
-}
-
-fn matches_selector(
-    element: &ElementData,
-    ancestors: &[&ElementData],
-    selector: &Selector,
-) -> bool {
-    if !matches_compound(element, selector) {
-        return false;
-    }
-    match &selector.parent {
-        None => true,
-        Some((Combinator::Child, parent)) => match ancestors.split_last() {
-            Some((nearest, rest)) => matches_selector(nearest, rest, parent),
-            None => false,
-        },
-        Some((Combinator::Descendant, parent)) => {
-            let mut end = ancestors.len();
-            while end > 0 {
-                end -= 1;
-                if matches_selector(ancestors[end], &ancestors[..end], parent) {
-                    return true;
-                }
-            }
-            false
-        }
-    }
-}
-
-fn matches_compound(element: &ElementData, selector: &Selector) -> bool {
-    if let Some(tag_name) = &selector.tag_name {
-        if *tag_name != element.tag_name {
-            return false;
-        }
-    }
-    if let Some(id) = &selector.id {
-        if element.id() != Some(id) {
-            return false;
-        }
-    }
-    let classes = element.classes();
-    for class in &selector.classes {
-        if !classes.contains(class.as_str()) {
-            return false;
-        }
-    }
-    selector.pseudo.iter().all(|pseudo| match pseudo {
-        Pseudo::Link => {
-            matches!(element.tag_name.as_str(), "a" | "area")
-                && element.attributes.contains_key("href")
-        }
-        Pseudo::Never => false,
-    })
 }
 
 impl<'a> StyledNode<'a> {

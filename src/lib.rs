@@ -23,6 +23,7 @@ pub mod page;
 pub mod paint;
 pub mod picture;
 pub mod radius;
+pub mod selector;
 pub mod shadow;
 pub mod style;
 pub mod supports;
