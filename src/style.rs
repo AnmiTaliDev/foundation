@@ -50,7 +50,9 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 13] = [
+const INHERITED_PROPERTIES: [&str; 15] = [
+    "word-break",
+    "overflow-wrap",
     "text-indent",
     "text-transform",
     "letter-spacing",
@@ -856,6 +858,23 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "justify" => TextAlign::Justify,
             _ => TextAlign::Left,
         }
+    }
+
+    pub fn break_all(&self) -> bool {
+        self.keyword("word-break") == Some("break-all")
+    }
+
+    pub fn break_long(&self) -> bool {
+        self.break_all()
+            || self.keyword("word-break") == Some("break-word")
+            || matches!(
+                self.keyword("overflow-wrap"),
+                Some("break-word" | "anywhere")
+            )
+    }
+
+    pub fn ellipsis(&self) -> bool {
+        self.keyword("text-overflow") == Some("ellipsis") && self.establishes_clip()
     }
 
     pub fn text_indent(&self) -> Indent {

@@ -218,7 +218,7 @@ fn alignment_uses_the_decorated_width() {
 #[test]
 fn long_words_break_inside_a_box_and_keep_both_edges() {
     with_layout(
-        "span { padding: 0 5px; border-width: 1px; border-color: red; background-color: lime }",
+        "span { padding: 0 5px; border-width: 1px; border-color: red; background-color: lime; overflow-wrap: break-word }",
         "<span>abcdefghijklmnopqrstuvwxyz</span>",
         70.0,
         |root| {

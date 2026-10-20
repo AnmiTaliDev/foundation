@@ -605,7 +605,7 @@ fn css_keeps_unitless_numbers() {
 fn long_words_break_across_lines() {
     let word = "abcdefghijklmnopqrstuvwxyz";
     let source = format!(
-        "<html><style>body {{ margin: 0 }}</style><body>{}</body></html>",
+        "<html><style>body {{ margin: 0; overflow-wrap: break-word }}</style><body>{}</body></html>",
         word
     );
     let font = text::default_font();

@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 95] = [
+const PROPERTIES: [&str; 98] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -81,6 +81,9 @@ const PROPERTIES: [&str; 95] = [
     "text-indent",
     "text-transform",
     "word-spacing",
+    "word-break",
+    "overflow-wrap",
+    "text-overflow",
     "text-decoration-color",
     "text-decoration-line",
     "text-decoration-style",

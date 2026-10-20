@@ -26,6 +26,8 @@ pub struct Run<'a> {
     pub vertical: VerticalAlign,
     pub letter_spacing: f32,
     pub word_spacing: f32,
+    pub break_all: bool,
+    pub break_long: bool,
 }
 
 impl Run<'_> {
@@ -113,6 +115,7 @@ pub struct InlineContent<'a> {
     pub items: Vec<InlineItem<'a>>,
     pub align: TextAlign,
     pub indent: Indent,
+    pub ellipsis: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -407,7 +410,7 @@ fn collect_words<'a>(
     words
 }
 
-fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a>> {
+fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts, per_char: bool) -> Vec<Word<'a>> {
     let Piece::Text { text, run, face } = word.piece else {
         return vec![word];
     };
@@ -437,7 +440,11 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a
                 face,
             },
             space_before: index == 0 && word.space_before,
-            break_before: true,
+            break_before: if per_char {
+                index == 0 && word.break_before
+            } else {
+                true
+            },
             opens: if index == 0 {
                 word.opens.clone()
             } else {
@@ -457,8 +464,14 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a
 fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a>> {
     let mut fitted = Vec::new();
     for word in words {
-        if word.wraps() && matches!(word.piece, Piece::Text { .. }) && word.width(fonts) > width {
-            fitted.extend(split_long_word(word, width, fonts));
+        let (break_all, break_long) = match &word.piece {
+            Piece::Text { run, .. } if word.wraps() => (run.break_all, run.break_long),
+            _ => (false, false),
+        };
+        if break_all {
+            fitted.extend(split_long_word(word, 0.0, fonts, true));
+        } else if break_long && word.width(fonts) > width {
+            fitted.extend(split_long_word(word, width, fonts, false));
         } else {
             fitted.push(word);
         }
@@ -532,15 +545,7 @@ pub fn layout_lines(
         let overflows = word.wraps() && x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
             let justify = overflows && !word.break_before;
-            top += finish_line(
-                &mut line,
-                content.align,
-                justify,
-                &area,
-                top,
-                fonts,
-                &mut lines,
-            );
+            top += end_line(&mut line, content, justify, &area, top, fonts, &mut lines);
             line.clear();
             x = 0.0;
             space = 0.0;
@@ -568,18 +573,78 @@ pub fn layout_lines(
         x += space + word_width;
     }
     if !line.is_empty() {
-        top += finish_line(
-            &mut line,
-            content.align,
-            false,
-            &area,
-            top,
-            fonts,
-            &mut lines,
-        );
+        top += end_line(&mut line, content, false, &area, top, fonts, &mut lines);
     }
     lines.height = top;
     lines
+}
+
+fn end_line(
+    line: &mut [PlacedWord],
+    content: &InlineContent,
+    justify: bool,
+    area: &Area,
+    top: f32,
+    fonts: &Fonts,
+    lines: &mut Lines,
+) -> f32 {
+    let start = lines.fragments.len();
+    let height = finish_line(line, content.align, justify, area, top, fonts, lines);
+    if content.ellipsis {
+        ellipsize(
+            &mut lines.fragments,
+            start,
+            area.origin_x + area.width,
+            fonts,
+        );
+    }
+    height
+}
+
+fn fragment_width(fragment: &Fragment, text: &str, fonts: &Fonts) -> f32 {
+    let chars = text.chars().count() as f32;
+    let spaces = text.chars().filter(|c| *c == ' ').count() as f32;
+    fonts.width(fragment.face, text, fragment.font_size)
+        + chars * fragment.letter_spacing
+        + spaces * fragment.word_spacing
+}
+
+fn ellipsize(fragments: &mut Vec<Fragment>, start: usize, right: f32, fonts: &Fonts) {
+    let overflows = fragments[start..]
+        .iter()
+        .any(|fragment| fragment.x + fragment_width(fragment, &fragment.text, fonts) > right);
+    if !overflows {
+        return;
+    }
+    let mut mark = fragments[start].clone();
+    mark.text = "\u{2026}".to_string();
+    let limit = right - fragment_width(&mark, "\u{2026}", fonts);
+    for index in start..fragments.len() {
+        let fragment = &fragments[index];
+        if fragment.x + fragment_width(fragment, &fragment.text, fonts) <= limit {
+            continue;
+        }
+        let mut keep = 0;
+        for (offset, c) in fragment.text.char_indices() {
+            let end = offset + c.len_utf8();
+            if fragment.x + fragment_width(fragment, &fragment.text[..end], fonts) > limit {
+                break;
+            }
+            keep = end;
+        }
+        mark = fragment.clone();
+        mark.text = "\u{2026}".to_string();
+        mark.x += fragment_width(fragment, &fragment.text[..keep], fonts);
+        let kept = fragment.text[..keep].to_string();
+        fragments.truncate(index + 1);
+        if kept.is_empty() {
+            fragments.pop();
+        } else {
+            fragments[index].text = kept;
+        }
+        fragments.push(mark);
+        return;
+    }
 }
 
 fn finish_line(

@@ -715,6 +715,7 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
         "grid-gap" => "gap".to_string(),
         "grid-row-gap" => "row-gap".to_string(),
         "grid-column-gap" => "column-gap".to_string(),
+        "word-wrap" => "overflow-wrap".to_string(),
         other => other.to_string(),
     };
     if name.is_empty() {

@@ -156,6 +156,7 @@ struct Flow<'a> {
     counter: i32,
     vertical: VerticalAlign,
     indent: Indent,
+    ellipsis: bool,
 }
 
 fn list_start(style: &StyledNode) -> i32 {
@@ -180,6 +181,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         counter: list_start(style),
         vertical: VerticalAlign::Raise(0.0),
         indent: style.text_indent(),
+        ellipsis: style.ellipsis(),
     };
     let align = style.text_align();
     let blockify = matches!(style.display(), Display::Flex | Display::Grid);
@@ -292,6 +294,8 @@ fn collect_child<'a>(
                 vertical: flow.vertical,
                 letter_spacing: node.letter_spacing(),
                 word_spacing: node.word_spacing(),
+                break_all: node.break_all(),
+                break_long: node.break_long(),
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -398,6 +402,7 @@ fn flush_items(align: TextAlign, flow: &mut Flow) {
                 } else {
                     Indent::default()
                 },
+                ellipsis: flow.ellipsis,
             }),
             Vec::new(),
         ));
@@ -568,6 +573,7 @@ impl<'a> LayoutBox<'a> {
                                     items: Vec::new(),
                                     align: TextAlign::Left,
                                     indent: Indent::default(),
+                                    ellipsis: false,
                                 }),
                                 Vec::new(),
                             ),
