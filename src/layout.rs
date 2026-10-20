@@ -994,30 +994,51 @@ impl<'a> LayoutBox<'a> {
                         return width;
                     }
                 }
-                if style.display() == Display::Flex {
-                    return self.flex_preferred_width(style, fonts, images, base);
-                }
-                if style.display() == Display::Table {
-                    return self.table_intrinsic_width(style, mode, fonts, images, base);
-                }
-                if style.display() == Display::Grid {
-                    return self.grid_intrinsic_width(style, mode, fonts, images, base);
-                }
-                let mut widest: f32 = 0.0;
-                for child in &self.children {
-                    if let BoxKind::Block(child_style) = &child.kind {
-                        if child_style.is_out_of_flow() {
-                            continue;
-                        }
-                    }
-                    let extras = match &child.kind {
-                        BoxKind::Block(child_style) => horizontal_extras(child_style, base),
-                        BoxKind::Anonymous(_) => 0.0,
-                    };
-                    widest = widest.max(child.intrinsic_width(mode, fonts, images, base) + extras);
-                }
-                widest
+                self.block_content_width(style, mode, fonts, images, base)
             }
+        }
+    }
+
+    fn block_content_width(
+        &self,
+        style: &StyledNode,
+        mode: Intrinsic,
+        fonts: &Fonts,
+        images: &ImageMap,
+        base: f32,
+    ) -> f32 {
+        if style.display() == Display::Flex {
+            return self.flex_preferred_width(style, fonts, images, base);
+        }
+        if style.display() == Display::Table {
+            return self.table_intrinsic_width(style, mode, fonts, images, base);
+        }
+        if style.display() == Display::Grid {
+            return self.grid_intrinsic_width(style, mode, fonts, images, base);
+        }
+        let mut widest: f32 = 0.0;
+        for child in &self.children {
+            if let BoxKind::Block(child_style) = &child.kind {
+                if child_style.is_out_of_flow() {
+                    continue;
+                }
+            }
+            let extras = match &child.kind {
+                BoxKind::Block(child_style) => horizontal_extras(child_style, base),
+                BoxKind::Anonymous(_) => 0.0,
+            };
+            widest = widest.max(child.intrinsic_width(mode, fonts, images, base) + extras);
+        }
+        widest
+    }
+
+    pub(crate) fn min_content_width(&self, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
+        match &self.kind {
+            BoxKind::Block(style) => match block_replaced(style, images, base) {
+                Some(replaced) => replaced.width,
+                None => self.block_content_width(style, Intrinsic::Min, fonts, images, base),
+            },
+            BoxKind::Anonymous(_) => self.intrinsic_width(Intrinsic::Min, fonts, images, base),
         }
     }
 

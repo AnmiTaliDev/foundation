@@ -2,6 +2,7 @@
 
 use crate::text::Fonts;
 
+use crate::css::Value;
 use crate::float::FloatContext;
 use crate::layout::{block_replaced, BoxKind, Dimensions, EdgeSizes, ImageMap, LayoutBox};
 use crate::style::{Align, FlexBasis, FlexDirection, FlexWrap, Justify, StyledNode};
@@ -190,6 +191,8 @@ fn read_item(
     let mut specified_main = None;
     let mut specified_cross = None;
     let mut basis_kind = FlexBasis::Auto;
+    let mut automatic_min = false;
+    let mut border_box = false;
 
     if let BoxKind::Block(style) = &child.kind {
         let style = *style;
@@ -238,6 +241,10 @@ fn read_item(
             item.cross_min = limit("min-width", Some(width)).unwrap_or(0.0);
             item.cross_max = limit("max-width", Some(width)).unwrap_or(f32::INFINITY);
         }
+        let min_name = if axes.row { "min-width" } else { "min-height" };
+        border_box = style.is_border_box();
+        automatic_min = matches!(style.value(min_name), None | Some(Value::Keyword(_)))
+            && !style.establishes_clip();
         item.grow = style.flex_grow();
         item.shrink = style.flex_shrink();
         item.order = style.order();
@@ -262,6 +269,7 @@ fn read_item(
     }
 
     let basis = match (basis_kind, specified_main) {
+        (FlexBasis::Size(size), _) if border_box => (size - item.main_extras).max(0.0),
         (FlexBasis::Size(size), _) => size,
         (FlexBasis::Auto, Some(size)) => size,
         _ => {
@@ -275,6 +283,16 @@ fn read_item(
         }
     };
     item.basis = basis;
+    if automatic_min {
+        let content = if axes.row {
+            child.min_content_width(fonts, images, width)
+        } else {
+            measure(child, Some(item.cross_pre), None, width, fonts, images)
+                .content
+                .height
+        };
+        item.min = specified_main.map_or(content, |size| content.min(size));
+    }
     item.hypothetical = basis.min(item.max).max(item.min);
     item
 }

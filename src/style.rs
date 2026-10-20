@@ -1497,11 +1497,15 @@ impl<'a> StyledNode<'a> {
         let length = self.length_from(self.value(name), default, percent_base);
         let specified = !matches!(self.value(name), None | Some(Value::Keyword(_)));
         match length {
-            Some(length) if specified && self.keyword("box-sizing") == Some("border-box") => {
+            Some(length) if specified && self.is_border_box() => {
                 Some((length - self.box_extras(name, percent_base)).max(0.0))
             }
             length => length,
         }
+    }
+
+    pub fn is_border_box(&self) -> bool {
+        self.keyword("box-sizing") == Some("border-box")
     }
 
     fn box_extras(&self, name: &str, percent_base: Option<f32>) -> f32 {
