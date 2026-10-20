@@ -228,7 +228,7 @@ fn inline_box_style(node: &StyledNode, id: usize) -> Option<Rc<InlineBoxStyle>> 
     Some(Rc::new(InlineBoxStyle {
         id,
         background,
-        border_color: node.color("border-color"),
+        border_color: node.color("border-top-color"),
         padding,
         border,
         margin_left,

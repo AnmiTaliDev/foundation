@@ -122,11 +122,19 @@ const BORDER_STYLE_PROPERTIES: [&str; 4] = [
     "border-left-style",
 ];
 
-const BOX_SHORTHANDS: [(&str, [&str; 4]); 4] = [
+const BORDER_COLOR_PROPERTIES: [&str; 4] = [
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+];
+
+const BOX_SHORTHANDS: [(&str, [&str; 4]); 5] = [
     ("margin", MARGIN_PROPERTIES),
     ("padding", PADDING_PROPERTIES),
     ("border-width", BORDER_WIDTH_PROPERTIES),
     ("border-style", BORDER_STYLE_PROPERTIES),
+    ("border-color", BORDER_COLOR_PROPERTIES),
 ];
 
 const FONT_SIZE_KEYWORDS: [(&str, f32); 7] = [
@@ -812,7 +820,15 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
         return expand_counters(name, value);
     }
     if name == "border" {
-        return expand_border(value);
+        return expand_border(value, &[0, 1, 2, 3]);
+    }
+    for (side, shorthand) in ["border-top", "border-right", "border-bottom", "border-left"]
+        .iter()
+        .enumerate()
+    {
+        if name == *shorthand {
+            return expand_border(value, &[side]);
+        }
     }
     if name == "font" {
         return expand_font(value);
@@ -978,6 +994,14 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
         && !split_values(value)
             .iter()
             .all(|token| is_line_style(&token.to_ascii_lowercase()))
+    {
+        return Vec::new();
+    }
+
+    if (name == "border-color" || BORDER_COLOR_PROPERTIES.contains(&name.as_str()))
+        && !split_values(value)
+            .iter()
+            .all(|token| is_border_color(token))
     {
         return Vec::new();
     }
@@ -1810,39 +1834,44 @@ fn parse_light_dark(text: &str) -> Option<Value> {
     None
 }
 
-fn expand_border(text: &str) -> Vec<Declaration> {
+fn expand_border(text: &str, sides: &[usize]) -> Vec<Declaration> {
     let mut declarations = Vec::new();
+    let mut push = |names: &[&str; 4], value: Value| {
+        for side in sides {
+            declarations.push(declaration(names[*side], value.clone()));
+        }
+    };
     for token in split_values(text) {
         match parse_value(token) {
-            Some(Value::Color(color)) => declarations.push(Declaration {
-                name: "border-color".to_string(),
-                value: Value::Color(color),
-            }),
-            Some(Value::Rgba(color, alpha)) => declarations.push(Declaration {
-                name: "border-color".to_string(),
-                value: Value::Rgba(color, alpha),
-            }),
+            Some(color @ (Value::Color(_) | Value::Rgba(..))) => {
+                push(&BORDER_COLOR_PROPERTIES, color)
+            }
             Some(width @ (Value::Length(_) | Value::Em(_))) => {
-                push_border_widths(&mut declarations, width);
+                push(&BORDER_WIDTH_PROPERTIES, width)
             }
             Some(Value::Keyword(keyword)) if keyword == "none" || keyword == "hidden" => {
-                push_border_widths(&mut declarations, Value::Length(0.0));
-                push_border_styles(&mut declarations, keyword);
+                push(&BORDER_WIDTH_PROPERTIES, Value::Length(0.0));
+                push(&BORDER_STYLE_PROPERTIES, Value::Keyword(keyword));
             }
             Some(Value::Keyword(keyword)) if is_line_style(&keyword) => {
-                push_border_styles(&mut declarations, keyword);
+                push(&BORDER_STYLE_PROPERTIES, Value::Keyword(keyword))
             }
             Some(Value::Keyword(keyword)) if keyword == "currentcolor" => {
-                declarations.push(Declaration {
-                    name: "border-color".to_string(),
-                    value: Value::Keyword(keyword),
-                })
+                push(&BORDER_COLOR_PROPERTIES, Value::Keyword(keyword))
             }
             Some(Value::Keyword(_)) => {}
             _ => return Vec::new(),
         }
     }
     declarations
+}
+
+fn is_border_color(token: &str) -> bool {
+    matches!(
+        parse_value(token),
+        Some(Value::Color(_) | Value::Rgba(..)) | Some(Value::Keyword(_))
+    ) && !is_line_style(&token.to_ascii_lowercase())
+        || token.eq_ignore_ascii_case("currentcolor")
 }
 
 fn is_line_style(keyword: &str) -> bool {
@@ -1859,21 +1888,6 @@ fn is_line_style(keyword: &str) -> bool {
             | "inset"
             | "outset"
     )
-}
-
-fn push_border_styles(declarations: &mut Vec<Declaration>, keyword: String) {
-    for name in BORDER_STYLE_PROPERTIES {
-        declarations.push(declaration(name, Value::Keyword(keyword.clone())));
-    }
-}
-
-fn push_border_widths(declarations: &mut Vec<Declaration>, width: Value) {
-    for name in BORDER_WIDTH_PROPERTIES {
-        declarations.push(Declaration {
-            name: name.to_string(),
-            value: width.clone(),
-        });
-    }
 }
 
 fn expand_box_shorthand(longhands: &[&str; 4], text: &str) -> Vec<Declaration> {

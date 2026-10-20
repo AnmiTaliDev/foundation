@@ -1240,16 +1240,16 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
-    let Some(Rgba { color, alpha }) = style.rgba("border-color") else {
-        return;
-    };
     let d = &layout_box.dimensions;
     let widths = [d.border.top, d.border.right, d.border.bottom, d.border.left];
     let radii = box_radii(layout_box, style);
     if !radii.is_zero() {
-        if widths.iter().all(|width| *width <= 0.0) {
+        let Some(Rgba { color, alpha }) = (0..4)
+            .filter(|side| widths[*side] > 0.0)
+            .find_map(|side| style.border_color(side))
+        else {
             return;
-        }
+        };
         list.push(DisplayCommand::BeginRound(Round {
             rect: d.border_box(),
             radii,
@@ -1273,6 +1273,9 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
         .into_iter()
         .enumerate()
     {
+        let Some(Rgba { color, alpha }) = style.border_color(side) else {
+            continue;
+        };
         push_edge(
             list,
             rect,

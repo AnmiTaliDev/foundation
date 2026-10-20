@@ -408,10 +408,13 @@ fn combinator_selectors_parse_and_sum_specificity() {
 fn border_shorthand_sets_width_and_color() {
     let sheet = css::parse("div { border: 2px solid red } p { border: none }");
     let div = &sheet.rules[0].declarations;
-    assert_eq!(div.len(), 9);
-    assert!(div
-        .iter()
-        .any(|d| d.name == "border-color" && d.value == Value::Color(RED)));
+    assert_eq!(div.len(), 12);
+    assert_eq!(
+        div.iter()
+            .filter(|d| d.name.ends_with("-color") && d.value == Value::Color(RED))
+            .count(),
+        4
+    );
     assert!(div
         .iter()
         .filter(|d| d.name.ends_with("-width"))

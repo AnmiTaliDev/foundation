@@ -77,6 +77,13 @@ const BORDER_STYLES: [&str; 4] = [
     "border-left-style",
 ];
 
+const BORDER_COLORS: [&str; 4] = [
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+];
+
 const BORDER_WIDTHS: [&str; 4] = [
     "border-top-width",
     "border-right-width",
@@ -727,17 +734,20 @@ fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
         };
     }
     let current = values.get("color").cloned().unwrap_or(Value::Color(BLACK));
-    for name in ["background-color", "border-color", "outline-color"] {
+    for name in ["background-color", "outline-color"]
+        .into_iter()
+        .chain(BORDER_COLORS)
+    {
         if is_current_color(values.get(name)) {
             values.insert(name.to_string(), current.clone());
         }
     }
-    let has_border = BORDER_WIDTHS.iter().any(|name| {
-        matches!(values.get(*name), Some(Value::Length(px)) if *px > 0.0)
-            || matches!(values.get(*name), Some(Value::Em(em)) if *em > 0.0)
-    });
-    if has_border && !values.contains_key("border-color") {
-        values.insert("border-color".to_string(), current);
+    for (width, color) in BORDER_WIDTHS.iter().zip(BORDER_COLORS) {
+        let visible = matches!(values.get(*width), Some(Value::Length(px)) if *px > 0.0)
+            || matches!(values.get(*width), Some(Value::Em(em)) if *em > 0.0);
+        if visible && !values.contains_key(color) {
+            values.insert(color.to_string(), current.clone());
+        }
     }
 }
 
@@ -938,6 +948,10 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "justify" => TextAlign::Justify,
             _ => TextAlign::Left,
         }
+    }
+
+    pub fn border_color(&self, side: usize) -> Option<Rgba> {
+        self.rgba(BORDER_COLORS[side])
     }
 
     pub fn border_style(&self, side: usize) -> StrokeStyle {
