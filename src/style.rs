@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::color::Rgba;
+use crate::counters::Counters;
 use crate::css::{self, Color, Declaration, Rule, Specificity, Stylesheet, Value};
 use crate::decoration::{self, Decoration, LineStyle};
 use crate::dom::{ElementData, Node, NodeType};
@@ -351,11 +352,19 @@ pub fn style_tree<'a>(
             0,
             &context,
             &PropertyMap::new(),
-            &mut Vec::new(),
+            &mut Walk {
+                ancestors: Vec::new(),
+                counters: Counters::new(),
+            },
             DEFAULT_FONT_SIZE,
         )),
         NodeType::Text(_) => None,
     }
+}
+
+struct Walk<'a> {
+    ancestors: Vec<Scope<'a>>,
+    counters: Counters,
 }
 
 fn style_node<'a>(
@@ -364,7 +373,7 @@ fn style_node<'a>(
     position: usize,
     context: &StyleContext,
     parent: &PropertyMap,
-    ancestors: &mut Vec<Scope<'a>>,
+    walk: &mut Walk<'a>,
     root_font_size: f32,
 ) -> StyledNode<'a> {
     let inherited = inherit(parent);
@@ -380,30 +389,25 @@ fn style_node<'a>(
                 siblings,
                 position,
             };
-            let mut values = specified_values(scope, ancestors, context, inherited, None);
+            let mut values = specified_values(scope, &walk.ancestors, context, inherited, None);
             compute(&mut values, parent, context, root_font_size);
-            let children_root_font_size = if ancestors.is_empty() {
+            let children_root_font_size = if walk.ancestors.is_empty() {
                 font_size_of(&values)
             } else {
                 root_font_size
             };
+            apply_counters(&mut walk.counters, &values);
+            walk.counters.enter();
             let before = pseudo_node(
                 scope,
-                ancestors,
+                &walk.ancestors,
                 context,
+                &mut walk.counters,
                 &values,
                 PseudoElement::Before,
                 root_font_size,
             );
-            let after = pseudo_node(
-                scope,
-                ancestors,
-                context,
-                &values,
-                PseudoElement::After,
-                root_font_size,
-            );
-            ancestors.push(scope);
+            walk.ancestors.push(scope);
             let mut children = Vec::new();
             children.extend(before);
             for (index, child) in node.children.iter().enumerate() {
@@ -413,11 +417,21 @@ fn style_node<'a>(
                     index,
                     context,
                     &values,
-                    ancestors,
+                    walk,
                     children_root_font_size,
                 ));
             }
-            ancestors.pop();
+            walk.ancestors.pop();
+            let after = pseudo_node(
+                scope,
+                &walk.ancestors,
+                context,
+                &mut walk.counters,
+                &values,
+                PseudoElement::After,
+                root_font_size,
+            );
+            walk.counters.leave();
             children.extend(after);
             StyledNode {
                 content: Content::Element(element),
@@ -455,10 +469,29 @@ fn compute(
     resolve_decorations(values, parent);
 }
 
+fn apply_counters(counters: &mut Counters, values: &PropertyMap) {
+    if matches!(values.get("display"), Some(Value::Keyword(keyword)) if keyword == "none") {
+        return;
+    }
+    for name in ["counter-reset", "counter-increment", "counter-set"] {
+        let Some(Value::Counters(list)) = values.get(name) else {
+            continue;
+        };
+        for (counter, number) in list {
+            match name {
+                "counter-reset" => counters.reset(counter, *number),
+                "counter-increment" => counters.increment(counter, *number),
+                _ => counters.set(counter, *number),
+            }
+        }
+    }
+}
+
 fn pseudo_node<'a>(
     scope: Scope,
     ancestors: &[Scope],
     context: &StyleContext,
+    counters: &mut Counters,
     parent: &PropertyMap,
     which: PseudoElement,
     root_font_size: f32,
@@ -469,7 +502,8 @@ fn pseudo_node<'a>(
     let Some(Value::Content(parts)) = values.get("content") else {
         return None;
     };
-    let text = generated::render(parts, scope.element);
+    apply_counters(counters, &values);
+    let text = generated::render(parts, scope.element, counters);
     compute(&mut values, parent, context, root_font_size);
     let mut children = Vec::new();
     if !text.is_empty() {

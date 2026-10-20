@@ -23,14 +23,30 @@ pub fn marker_text(kind: &str, value: i32) -> Option<String> {
         "disc" => return Some("\u{2022} ".to_string()),
         "circle" => return Some("\u{25E6} ".to_string()),
         "square" => return Some("\u{25AA} ".to_string()),
+        _ => numeral(kind, value)?,
+    };
+    Some(format!("{}. ", text))
+}
+
+pub fn counter_text(kind: &str, value: i32) -> String {
+    match kind {
+        "none" => String::new(),
+        "disc" => "\u{2022}".to_string(),
+        "circle" => "\u{25E6}".to_string(),
+        "square" => "\u{25AA}".to_string(),
+        _ => numeral(kind, value).unwrap_or_else(|| value.to_string()),
+    }
+}
+
+fn numeral(kind: &str, value: i32) -> Option<String> {
+    Some(match kind {
         "decimal-leading-zero" if (0..10).contains(&value) => format!("0{}", value),
         "lower-alpha" | "lower-latin" => alphabetic(value, b'a')?,
         "upper-alpha" | "upper-latin" => alphabetic(value, b'A')?,
         "lower-roman" => roman(value)?.to_lowercase(),
         "upper-roman" => roman(value)?,
         _ => value.to_string(),
-    };
-    Some(format!("{}. ", text))
+    })
 }
 
 fn alphabetic(value: i32, first: u8) -> Option<String> {

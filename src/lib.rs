@@ -3,6 +3,7 @@
 pub mod calc;
 pub mod color;
 mod composite;
+pub mod counters;
 pub mod css;
 pub mod decoration;
 pub mod dom;

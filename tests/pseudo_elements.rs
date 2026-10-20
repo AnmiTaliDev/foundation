@@ -237,7 +237,7 @@ fn content_parses_into_parts() {
 
 #[test]
 fn unsupported_content_values_are_dropped() {
-    for value in ["counter(n)", "open-quote", "url(x.png)", "\"unterminated"] {
+    for value in ["counter()", "open-quote", "url(x.png)", "\"unterminated"] {
         let sheet = css::parse(&format!("p::before {{ content: {} }}", value));
         assert!(sheet.rules[0].declarations.is_empty(), "{}", value);
     }

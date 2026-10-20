@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::counters::Counters;
 use crate::dom::ElementData;
+use crate::list;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Part {
     Literal(String),
     Attr(String),
+    Counter {
+        name: String,
+        style: String,
+    },
+    Counters {
+        name: String,
+        separator: String,
+        style: String,
+    },
 }
 
 pub fn parse(text: &str) -> Option<Vec<Part>> {
@@ -16,14 +27,21 @@ pub fn parse(text: &str) -> Option<Vec<Part>> {
             let (literal, after) = string(rest)?;
             parts.push(Part::Literal(literal));
             rest = after.trim_start();
-        } else {
-            let inner = rest.strip_prefix("attr(")?;
+        } else if let Some(inner) = rest.strip_prefix("attr(") {
             let close = inner.find(')')?;
             let name = inner[..close].trim().to_ascii_lowercase();
-            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            if !is_name(&name) {
                 return None;
             }
             parts.push(Part::Attr(name));
+            rest = inner[close + 1..].trim_start();
+        } else {
+            let (separated, inner) = match rest.strip_prefix("counters(") {
+                Some(inner) => (true, inner),
+                None => (false, rest.strip_prefix("counter(")?),
+            };
+            let close = closing_paren(inner)?;
+            parts.push(counter_part(&inner[..close], separated)?);
             rest = inner[close + 1..].trim_start();
         }
     }
@@ -31,6 +49,79 @@ pub fn parse(text: &str) -> Option<Vec<Part>> {
         return None;
     }
     Some(parts)
+}
+
+fn is_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn closing_paren(text: &str) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, c) in text.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+        } else if c == ')' {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn counter_part(arguments: &str, separated: bool) -> Option<Part> {
+    let mut items = Vec::new();
+    let mut rest = arguments;
+    loop {
+        let rest_trimmed = rest.trim_start();
+        let end = if rest_trimmed.starts_with('"') || rest_trimmed.starts_with('\'') {
+            let (_, after) = string(rest_trimmed)?;
+            rest_trimmed.len() - after.len()
+        } else {
+            rest_trimmed.find(',').unwrap_or(rest_trimmed.len())
+        };
+        items.push(rest_trimmed[..end].trim());
+        let after = rest_trimmed[end..].trim_start();
+        match after.strip_prefix(',') {
+            Some(next) => rest = next,
+            None if after.is_empty() => break,
+            None => return None,
+        }
+    }
+    let name = items.first()?.to_ascii_lowercase();
+    if !is_name(&name) {
+        return None;
+    }
+    let style_index = if separated { 2 } else { 1 };
+    if items.len() < style_index || items.len() > style_index + 1 {
+        return None;
+    }
+    let style = match items.get(style_index) {
+        Some(style) => style.to_ascii_lowercase(),
+        None => "decimal".to_string(),
+    };
+    if !list::is_type(&style) {
+        return None;
+    }
+    if !separated {
+        return Some(Part::Counter { name, style });
+    }
+    let (separator, after) = string(items.get(1)?)?;
+    if !after.is_empty() {
+        return None;
+    }
+    Some(Part::Counters {
+        name,
+        separator,
+        style,
+    })
 }
 
 fn string(text: &str) -> Option<(String, &str)> {
@@ -75,7 +166,7 @@ fn string(text: &str) -> Option<(String, &str)> {
     None
 }
 
-pub fn render(parts: &[Part], element: &ElementData) -> String {
+pub fn render(parts: &[Part], element: &ElementData, counters: &Counters) -> String {
     let mut text = String::new();
     for part in parts {
         match part {
@@ -84,6 +175,22 @@ pub fn render(parts: &[Part], element: &ElementData) -> String {
                 if let Some(value) = element.attributes.get(name) {
                     text.push_str(value);
                 }
+            }
+            Part::Counter { name, style } => {
+                text.push_str(&list::counter_text(style, counters.value(name)));
+            }
+            Part::Counters {
+                name,
+                separator,
+                style,
+            } => {
+                let values = counters.values(name);
+                let values = if values.is_empty() { vec![0] } else { values };
+                let texts: Vec<String> = values
+                    .into_iter()
+                    .map(|value| list::counter_text(style, value))
+                    .collect();
+                text.push_str(&texts.join(separator));
             }
         }
     }

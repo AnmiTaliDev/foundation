@@ -69,6 +69,7 @@ pub enum Value {
     Shadows(Vec<Shadow>),
     Decorations(Vec<Decoration>),
     Content(Vec<generated::Part>),
+    Counters(Vec<(String, i32)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -642,6 +643,41 @@ fn expand_content(name: String, value: &str) -> Vec<Declaration> {
     vec![Declaration { name, value }]
 }
 
+fn expand_counters(name: String, value: &str) -> Vec<Declaration> {
+    if value.eq_ignore_ascii_case("none") {
+        return vec![Declaration {
+            name,
+            value: Value::Keyword("none".to_string()),
+        }];
+    }
+    let default = if name == "counter-increment" { 1 } else { 0 };
+    let tokens = split_values(value);
+    let mut counters = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let counter = tokens[index];
+        if counter.is_empty()
+            || !counter.chars().all(is_ident_char)
+            || counter.starts_with(|c: char| c.is_ascii_digit())
+            || counter.eq_ignore_ascii_case("none")
+        {
+            return Vec::new();
+        }
+        let number = tokens
+            .get(index + 1)
+            .and_then(|token| token.parse::<i32>().ok());
+        counters.push((counter.to_string(), number.unwrap_or(default)));
+        index += if number.is_some() { 2 } else { 1 };
+    }
+    if counters.is_empty() {
+        return Vec::new();
+    }
+    vec![Declaration {
+        name,
+        value: Value::Counters(counters),
+    }]
+}
+
 fn split_declarations(block: &str) -> Vec<&str> {
     let mut items = Vec::new();
     let mut quote: Option<char> = None;
@@ -688,6 +724,12 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
 
     if name == "content" {
         return expand_content(name, value);
+    }
+    if matches!(
+        name.as_str(),
+        "counter-reset" | "counter-increment" | "counter-set"
+    ) {
+        return expand_counters(name, value);
     }
     if name == "border" {
         return expand_border(value);
