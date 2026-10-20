@@ -1494,7 +1494,35 @@ impl<'a> StyledNode<'a> {
         default: Option<f32>,
         percent_base: Option<f32>,
     ) -> Option<f32> {
-        self.length_from(self.value(name), default, percent_base)
+        let length = self.length_from(self.value(name), default, percent_base);
+        let specified = !matches!(self.value(name), None | Some(Value::Keyword(_)));
+        match length {
+            Some(length) if specified && self.keyword("box-sizing") == Some("border-box") => {
+                Some((length - self.box_extras(name, percent_base)).max(0.0))
+            }
+            length => length,
+        }
+    }
+
+    fn box_extras(&self, name: &str, percent_base: Option<f32>) -> f32 {
+        let (borders, paddings, base) = match name {
+            "width" | "min-width" | "max-width" => (
+                ["border-left-width", "border-right-width"],
+                ["padding-left", "padding-right"],
+                percent_base.unwrap_or(0.0),
+            ),
+            "height" | "min-height" | "max-height" => (
+                ["border-top-width", "border-bottom-width"],
+                ["padding-top", "padding-bottom"],
+                0.0,
+            ),
+            _ => return 0.0,
+        };
+        borders
+            .into_iter()
+            .chain(paddings)
+            .map(|name| self.px(name, base))
+            .sum()
     }
 
     fn length_from(
