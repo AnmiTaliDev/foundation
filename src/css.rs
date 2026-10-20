@@ -644,6 +644,31 @@ fn expand_content(name: String, value: &str) -> Vec<Declaration> {
     vec![Declaration { name, value }]
 }
 
+fn expand_outline(text: &str) -> Vec<Declaration> {
+    let mut width = Value::Length(3.0);
+    let mut style = Value::Keyword("none".to_string());
+    let mut color = Value::Keyword("currentcolor".to_string());
+    for token in split_values(text) {
+        match parse_value(token) {
+            Some(value @ (Value::Color(_) | Value::Rgba(..))) => color = value,
+            Some(value @ (Value::Length(_) | Value::Em(_))) => width = value,
+            Some(Value::Keyword(keyword)) => match keyword.as_str() {
+                "currentcolor" => color = Value::Keyword(keyword),
+                "thin" | "medium" | "thick" => width = Value::Keyword(keyword),
+                "none" | "hidden" | "auto" | "solid" | "dashed" | "dotted" | "double"
+                | "groove" | "ridge" | "inset" | "outset" => style = Value::Keyword(keyword),
+                _ => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        }
+    }
+    vec![
+        declaration("outline-width", width),
+        declaration("outline-style", style),
+        declaration("outline-color", color),
+    ]
+}
+
 fn expand_quotes(name: String, value: &str) -> Vec<Declaration> {
     let lower = value.to_ascii_lowercase();
     let value = if lower == "none" || lower == "auto" {
@@ -746,6 +771,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
 
     if name == "content" {
         return expand_content(name, value);
+    }
+    if name == "outline" {
+        return expand_outline(value);
     }
     if name == "quotes" {
         return expand_quotes(name, value);

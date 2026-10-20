@@ -38,6 +38,19 @@ impl Radii {
         }
     }
 
+    pub fn grow(self, distance: f32) -> Radii {
+        let expand = |(x, y): (f32, f32)| {
+            if x > 0.0 && y > 0.0 {
+                ((x + distance).max(0.0), (y + distance).max(0.0))
+            } else {
+                (0.0, 0.0)
+            }
+        };
+        Radii {
+            corners: self.corners.map(expand),
+        }
+    }
+
     pub fn shrink(self, widths: [f32; 4]) -> Radii {
         let [top, right, bottom, left] = widths;
         let [tl, tr, br, bl] = self.corners;

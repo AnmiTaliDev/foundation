@@ -204,6 +204,13 @@ pub enum TextAlign {
     Justify,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Outline {
+    pub width: f32,
+    pub offset: f32,
+    pub color: Rgba,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Indent {
     pub px: f32,
@@ -668,7 +675,7 @@ fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
         };
     }
     let current = values.get("color").cloned().unwrap_or(Value::Color(BLACK));
-    for name in ["background-color", "border-color"] {
+    for name in ["background-color", "border-color", "outline-color"] {
         if is_current_color(values.get(name)) {
             values.insert(name.to_string(), current.clone());
         }
@@ -684,7 +691,13 @@ fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
 
 fn resolve_spacing(values: &mut PropertyMap) {
     let font_size = font_size_of(values);
-    for name in ["letter-spacing", "word-spacing", "text-indent"] {
+    for name in [
+        "letter-spacing",
+        "word-spacing",
+        "text-indent",
+        "outline-width",
+        "outline-offset",
+    ] {
         if let Some(Value::Em(em)) = values.get(name) {
             let px = em * font_size;
             values.insert(name.to_string(), Value::Length(px));
@@ -873,6 +886,37 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(keyword)) if keyword == "justify" => TextAlign::Justify,
             _ => TextAlign::Left,
         }
+    }
+
+    pub fn outline(&self) -> Option<Outline> {
+        if matches!(
+            self.keyword("outline-style"),
+            None | Some("none" | "hidden")
+        ) {
+            return None;
+        }
+        let width = match self.value("outline-width") {
+            Some(Value::Length(px)) => *px,
+            Some(Value::Keyword(keyword)) if keyword == "thin" => 1.0,
+            Some(Value::Keyword(keyword)) if keyword == "thick" => 5.0,
+            _ => 3.0,
+        };
+        if width <= 0.0 {
+            return None;
+        }
+        let offset = match self.value("outline-offset") {
+            Some(Value::Length(px)) => *px,
+            _ => 0.0,
+        };
+        let color = self.rgba("outline-color").unwrap_or(Rgba {
+            color: self.text_color(),
+            alpha: self.text_alpha(),
+        });
+        Some(Outline {
+            width,
+            offset,
+            color,
+        })
     }
 
     pub fn break_all(&self) -> bool {

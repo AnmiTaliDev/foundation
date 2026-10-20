@@ -760,6 +760,7 @@ fn paint_flow(
         emit(list, fixed, content_commands(child));
         paint_flow(&child.children, fixed, child.dimensions.content, view, list);
         end_clip(list, fixed, clip);
+        emit(list, fixed, outline_commands(child));
     }
 }
 
@@ -782,6 +783,7 @@ fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
             list,
         );
         end_clip(list, item.fixed, clip);
+        emit(list, item.fixed, outline_commands(item.layout_box));
     }
     for clip in &item.clips {
         end_clip(list, item.fixed, Some(*clip));
@@ -915,6 +917,7 @@ fn paint_stacking_contents(
         paint_positioned(item, view, list);
     }
     end_clip(list, fixed, clip);
+    emit(list, fixed, outline_commands(layout_box));
 }
 
 fn paint_shadows(layout_box: &LayoutBox, inset: bool, list: &mut Vec<DisplayCommand>) {
@@ -1123,6 +1126,51 @@ fn border_edges(border_box: &Rect, widths: [f32; 4]) -> [Rect; 4] {
             height: side_height,
         },
     ]
+}
+
+fn outline_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
+    let mut list = Vec::new();
+    let BoxKind::Block(style) = layout_box.kind else {
+        return list;
+    };
+    let Some(outline) = style.outline() else {
+        return list;
+    };
+    let Rgba { color, alpha } = outline.color;
+    let border_box = layout_box.dimensions.border_box();
+    let inflate = |distance: f32| Rect {
+        x: border_box.x - distance,
+        y: border_box.y - distance,
+        width: (border_box.width + distance * 2.0).max(0.0),
+        height: (border_box.height + distance * 2.0).max(0.0),
+    };
+    let inner = inflate(outline.offset);
+    let outer = inflate(outline.offset + outline.width);
+    let radii = box_radii(layout_box, style);
+    if radii.is_zero() {
+        for rect in border_edges(&outer, [outline.width; 4]) {
+            list.push(DisplayCommand::Rect(SolidRect { color, alpha, rect }));
+        }
+        return list;
+    }
+    list.push(DisplayCommand::BeginRound(Round {
+        rect: outer,
+        radii: radii.grow(outline.offset + outline.width),
+        inverted: false,
+    }));
+    list.push(DisplayCommand::BeginRound(Round {
+        rect: inner,
+        radii: radii.grow(outline.offset),
+        inverted: true,
+    }));
+    list.push(DisplayCommand::Rect(SolidRect {
+        color,
+        alpha,
+        rect: outer,
+    }));
+    list.push(DisplayCommand::EndGroup);
+    list.push(DisplayCommand::EndGroup);
+    list
 }
 
 fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {

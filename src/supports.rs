@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 99] = [
+const PROPERTIES: [&str; 103] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -83,6 +83,10 @@ const PROPERTIES: [&str; 99] = [
     "word-spacing",
     "word-break",
     "quotes",
+    "outline-color",
+    "outline-offset",
+    "outline-style",
+    "outline-width",
     "overflow-wrap",
     "text-overflow",
     "text-decoration-color",
