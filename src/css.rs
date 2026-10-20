@@ -39,7 +39,14 @@ pub struct Selector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub classes: Vec<String>,
+    pub pseudo: Vec<Pseudo>,
     pub parent: Option<(Combinator, Box<Selector>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Pseudo {
+    Link,
+    Never,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -276,7 +283,7 @@ impl Selector {
     pub fn specificity(&self) -> Specificity {
         let mut specificity = (
             usize::from(self.id.is_some()),
-            self.classes.len(),
+            self.classes.len() + self.pseudo.len(),
             usize::from(self.tag_name.is_some()),
         );
         if let Some((_, parent)) = &self.parent {
@@ -694,6 +701,7 @@ fn parse_compound(text: &str) -> Option<Selector> {
         tag_name: None,
         id: None,
         classes: Vec::new(),
+        pseudo: Vec::new(),
         parent: None,
     };
     let mut rest = text;
@@ -714,6 +722,17 @@ fn parse_compound(text: &str) -> Option<Selector> {
             }
             selector.id = Some(id.to_string());
             rest = &after[id.len()..];
+        } else if let Some(after) = rest.strip_prefix(':') {
+            let name = take_ident(after);
+            selector
+                .pseudo
+                .push(match name.to_ascii_lowercase().as_str() {
+                    "link" | "any-link" => Pseudo::Link,
+                    "visited" | "hover" | "active" | "focus" | "focus-within" | "focus-visible"
+                    | "target" => Pseudo::Never,
+                    _ => return None,
+                });
+            rest = &after[name.len()..];
         } else {
             let after = rest.strip_prefix('.')?;
             let class = take_ident(after);

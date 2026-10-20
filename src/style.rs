@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::color::Rgba;
 use crate::css::{
-    self, Color, Combinator, Declaration, Rule, Selector, Specificity, Stylesheet, Value,
+    self, Color, Combinator, Declaration, Pseudo, Rule, Selector, Specificity, Stylesheet, Value,
 };
 use crate::decoration::{self, Decoration, LineStyle};
 use crate::dom::{ElementData, Node, NodeType};
@@ -25,7 +25,8 @@ pub const USER_AGENT_STYLESHEET: &str =
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
     sub { vertical-align: sub; font-size: 13px; } sup { vertical-align: super; font-size: 13px; } \
-    u, ins, a { text-decoration: underline; } \
+    u, ins { text-decoration: underline; } \
+    a:link { color: #0000ee; text-decoration: underline; } \
     s, del { text-decoration: line-through; } \
     pre { margin-top: 16px; margin-bottom: 16px; white-space: pre; } \
     table { display: table; border-spacing: 2px; } \
@@ -693,7 +694,13 @@ fn matches_compound(element: &ElementData, selector: &Selector) -> bool {
             return false;
         }
     }
-    true
+    selector.pseudo.iter().all(|pseudo| match pseudo {
+        Pseudo::Link => {
+            matches!(element.tag_name.as_str(), "a" | "area")
+                && element.attributes.contains_key("href")
+        }
+        Pseudo::Never => false,
+    })
 }
 
 impl<'a> StyledNode<'a> {
