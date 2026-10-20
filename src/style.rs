@@ -205,6 +205,21 @@ pub enum TextAlign {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackgroundBox {
+    Border,
+    Padding,
+    Content,
+}
+
+fn background_box(keyword: Option<&str>) -> BackgroundBox {
+    match keyword {
+        Some("padding-box") => BackgroundBox::Padding,
+        Some("content-box") => BackgroundBox::Content,
+        _ => BackgroundBox::Border,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Outline {
     pub width: f32,
     pub offset: f32,
@@ -1312,6 +1327,17 @@ impl<'a> StyledNode<'a> {
             Some("repeat-y") => (false, true),
             Some("no-repeat") => (false, false),
             _ => (true, true),
+        }
+    }
+
+    pub fn background_clip(&self) -> BackgroundBox {
+        background_box(self.keyword("background-clip"))
+    }
+
+    pub fn background_origin(&self) -> BackgroundBox {
+        match self.keyword("background-origin") {
+            None => BackgroundBox::Padding,
+            keyword => background_box(keyword),
         }
     }
 

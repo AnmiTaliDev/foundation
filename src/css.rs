@@ -897,6 +897,17 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             })
             .unwrap_or_default();
     }
+    if name == "background-clip" || name == "background-origin" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword)) if is_box_keyword(&keyword) => {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
     if name == "background-position" {
         return expand_position(&split_values(value), "background-position");
     }
@@ -955,6 +966,7 @@ fn expand_background(text: &str) -> Vec<Declaration> {
     let mut position = Vec::new();
     let mut size = Vec::new();
     let mut in_size = false;
+    let mut boxes = Vec::new();
     for token in split_values(text) {
         if token == "/" {
             in_size = true;
@@ -987,6 +999,7 @@ fn expand_background(text: &str) -> Vec<Declaration> {
                     value: Value::Keyword(keyword),
                 })
             }
+            Some(Value::Keyword(keyword)) if is_box_keyword(&keyword) => boxes.push(keyword),
             Some(Value::Keyword(keyword)) if is_repeat_keyword(&keyword) => {
                 declarations.push(Declaration {
                     name: "background-repeat".to_string(),
@@ -1000,7 +1013,20 @@ fn expand_background(text: &str) -> Vec<Declaration> {
     }
     declarations.extend(expand_position(&position, "background-position"));
     declarations.extend(expand_size(&size));
+    if let Some(origin) = boxes.first() {
+        let clip = boxes.get(1).unwrap_or(origin);
+        for (name, keyword) in [("background-origin", origin), ("background-clip", clip)] {
+            declarations.push(Declaration {
+                name: name.to_string(),
+                value: Value::Keyword(keyword.clone()),
+            });
+        }
+    }
     declarations
+}
+
+fn is_box_keyword(keyword: &str) -> bool {
+    matches!(keyword, "border-box" | "padding-box" | "content-box")
 }
 
 fn is_repeat_keyword(keyword: &str) -> bool {

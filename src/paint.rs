@@ -14,7 +14,7 @@ use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::picture::Picture;
 use crate::radius::{Radii, Round};
 use crate::shadow;
-use crate::style::{Content, Position, StyledNode};
+use crate::style::{BackgroundBox, Content, Position, StyledNode};
 
 const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
@@ -1026,37 +1026,65 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
-    let radii = box_radii(layout_box, style);
+    let d = &layout_box.dimensions;
+    let border = [d.border.top, d.border.right, d.border.bottom, d.border.left];
+    let (clip, inset) = match style.background_clip() {
+        BackgroundBox::Border => (d.border_box(), [0.0; 4]),
+        BackgroundBox::Padding => (d.padding_box(), border),
+        BackgroundBox::Content => (
+            d.content,
+            [
+                border[0] + d.padding.top,
+                border[1] + d.padding.right,
+                border[2] + d.padding.bottom,
+                border[3] + d.padding.left,
+            ],
+        ),
+    };
+    let radii = box_radii(layout_box, style).shrink(inset);
     if radii.is_zero() {
-        push_background(layout_box, style, list);
+        push_background(layout_box, style, clip, list);
         return;
     }
     list.push(DisplayCommand::BeginRound(Round {
-        rect: layout_box.dimensions.border_box(),
+        rect: clip,
         radii,
         inverted: false,
     }));
-    push_background(layout_box, style, list);
+    push_background(layout_box, style, clip, list);
     list.push(DisplayCommand::EndGroup);
 }
 
-fn push_background(layout_box: &LayoutBox, style: &StyledNode, list: &mut Vec<DisplayCommand>) {
+fn background_origin(layout_box: &LayoutBox, style: &StyledNode) -> Rect {
+    match style.background_origin() {
+        BackgroundBox::Border => layout_box.dimensions.border_box(),
+        BackgroundBox::Padding => layout_box.dimensions.padding_box(),
+        BackgroundBox::Content => layout_box.dimensions.content,
+    }
+}
+
+fn push_background(
+    layout_box: &LayoutBox,
+    style: &StyledNode,
+    clip: Rect,
+    list: &mut Vec<DisplayCommand>,
+) {
     if let Some(Rgba { color, alpha }) = style.rgba("background-color") {
         if alpha > 0 {
             list.push(DisplayCommand::Rect(SolidRect {
                 color,
                 alpha,
-                rect: layout_box.dimensions.border_box(),
+                rect: clip,
             }));
         }
     }
     if let Some(gradient) = style.background_gradient() {
-        let origin = layout_box.dimensions.padding_box();
+        let origin = background_origin(layout_box, style);
         let area = (origin.width, origin.height);
         let (width, height) = style.background_size(area, area);
         let (repeat_x, repeat_y) = style.background_repeat();
         list.push(DisplayCommand::GradientTiles(GradientTiles {
-            clip: layout_box.dimensions.border_box(),
+            clip,
             tile: Rect {
                 x: origin.x
                     + style.background_offset("background-position-x", origin.width - width),
@@ -1074,7 +1102,7 @@ fn push_background(layout_box: &LayoutBox, style: &StyledNode, list: &mut Vec<Di
     let Some(picture) = &layout_box.background_picture else {
         return;
     };
-    let origin = layout_box.dimensions.padding_box();
+    let origin = background_origin(layout_box, style);
     let (width, height) = style.background_size(
         (origin.width, origin.height),
         (picture.width as f32, picture.height as f32),
@@ -1083,7 +1111,7 @@ fn push_background(layout_box: &LayoutBox, style: &StyledNode, list: &mut Vec<Di
     let x = origin.x + style.background_offset("background-position-x", origin.width - width);
     let y = origin.y + style.background_offset("background-position-y", origin.height - height);
     list.push(DisplayCommand::Tiles(Tiles {
-        clip: layout_box.dimensions.border_box(),
+        clip,
         tile: Rect {
             x,
             y,
