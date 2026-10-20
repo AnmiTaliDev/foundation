@@ -27,6 +27,7 @@ pub const USER_AGENT_STYLESHEET: &str =
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
     sub { vertical-align: sub; font-size: 13px; } sup { vertical-align: super; font-size: 13px; } \
+    q::before { content: open-quote; } q::after { content: close-quote; } \
     u, ins { text-decoration: underline; } \
     a:link { color: #0000ee; text-decoration: underline; } \
     s, del { text-decoration: line-through; } \
@@ -50,7 +51,8 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 15] = [
+const INHERITED_PROPERTIES: [&str; 16] = [
+    "quotes",
     "word-break",
     "overflow-wrap",
     "text-indent",
@@ -357,6 +359,7 @@ pub fn style_tree<'a>(
             &mut Walk {
                 ancestors: Vec::new(),
                 counters: Counters::new(),
+                quote_depth: 0,
             },
             DEFAULT_FONT_SIZE,
         )),
@@ -367,6 +370,7 @@ pub fn style_tree<'a>(
 struct Walk<'a> {
     ancestors: Vec<Scope<'a>>,
     counters: Counters,
+    quote_depth: usize,
 }
 
 fn style_node<'a>(
@@ -402,9 +406,8 @@ fn style_node<'a>(
             walk.counters.enter();
             let before = pseudo_node(
                 scope,
-                &walk.ancestors,
+                walk,
                 context,
-                &mut walk.counters,
                 &values,
                 PseudoElement::Before,
                 root_font_size,
@@ -426,9 +429,8 @@ fn style_node<'a>(
             walk.ancestors.pop();
             let after = pseudo_node(
                 scope,
-                &walk.ancestors,
+                walk,
                 context,
-                &mut walk.counters,
                 &values,
                 PseudoElement::After,
                 root_font_size,
@@ -491,21 +493,34 @@ fn apply_counters(counters: &mut Counters, values: &PropertyMap) {
 
 fn pseudo_node<'a>(
     scope: Scope,
-    ancestors: &[Scope],
+    walk: &mut Walk,
     context: &StyleContext,
-    counters: &mut Counters,
     parent: &PropertyMap,
     which: PseudoElement,
     root_font_size: f32,
 ) -> Option<StyledNode<'a>> {
     let mut inherited = inherit(parent);
     inherited.insert("display".to_string(), Value::Keyword("inline".to_string()));
-    let mut values = specified_values(scope, ancestors, context, inherited, Some(which));
+    let mut values = specified_values(scope, &walk.ancestors, context, inherited, Some(which));
     let Some(Value::Content(parts)) = values.get("content") else {
         return None;
     };
-    apply_counters(counters, &values);
-    let text = generated::render(parts, scope.element, counters);
+    apply_counters(&mut walk.counters, &values);
+    let quotes: Vec<(String, String)> = match values.get("quotes") {
+        Some(Value::Quotes(pairs)) => pairs.clone(),
+        Some(Value::Keyword(keyword)) if keyword == "none" => Vec::new(),
+        _ => generated::DEFAULT_QUOTES
+            .iter()
+            .map(|(open, close)| (open.to_string(), close.to_string()))
+            .collect(),
+    };
+    let text = generated::render(
+        parts,
+        scope.element,
+        &walk.counters,
+        &quotes,
+        &mut walk.quote_depth,
+    );
     compute(&mut values, parent, context, root_font_size);
     let mut children = Vec::new();
     if !text.is_empty() {

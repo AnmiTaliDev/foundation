@@ -70,6 +70,7 @@ pub enum Value {
     Decorations(Vec<Decoration>),
     Content(Vec<generated::Part>),
     Counters(Vec<(String, i32)>),
+    Quotes(Vec<(String, String)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -643,6 +644,26 @@ fn expand_content(name: String, value: &str) -> Vec<Declaration> {
     vec![Declaration { name, value }]
 }
 
+fn expand_quotes(name: String, value: &str) -> Vec<Declaration> {
+    let lower = value.to_ascii_lowercase();
+    let value = if lower == "none" || lower == "auto" {
+        Value::Keyword(lower)
+    } else {
+        match generated::parse_strings(value) {
+            Some(strings) if !strings.is_empty() && strings.len() % 2 == 0 => {
+                let mut pairs = Vec::new();
+                let mut iter = strings.into_iter();
+                while let (Some(open), Some(close)) = (iter.next(), iter.next()) {
+                    pairs.push((open, close));
+                }
+                Value::Quotes(pairs)
+            }
+            _ => return Vec::new(),
+        }
+    };
+    vec![Declaration { name, value }]
+}
+
 fn expand_counters(name: String, value: &str) -> Vec<Declaration> {
     if value.eq_ignore_ascii_case("none") {
         return vec![Declaration {
@@ -725,6 +746,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
 
     if name == "content" {
         return expand_content(name, value);
+    }
+    if name == "quotes" {
+        return expand_quotes(name, value);
     }
     if matches!(
         name.as_str(),

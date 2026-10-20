@@ -8,6 +8,7 @@ use crate::list;
 pub enum Part {
     Literal(String),
     Attr(String),
+    Quote(Quote),
     Counter {
         name: String,
         style: String,
@@ -19,6 +20,27 @@ pub enum Part {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Quote {
+    Open,
+    Close,
+    NoOpen,
+    NoClose,
+}
+
+pub const DEFAULT_QUOTES: [(&str, &str); 2] = [("\u{201C}", "\u{201D}"), ("\u{2018}", "\u{2019}")];
+
+pub fn parse_strings(text: &str) -> Option<Vec<String>> {
+    let mut strings = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let (literal, after) = string(rest)?;
+        strings.push(literal);
+        rest = after.trim_start();
+    }
+    Some(strings)
+}
+
 pub fn parse(text: &str) -> Option<Vec<Part>> {
     let mut parts = Vec::new();
     let mut rest = text.trim();
@@ -26,6 +48,9 @@ pub fn parse(text: &str) -> Option<Vec<Part>> {
         if rest.starts_with('"') || rest.starts_with('\'') {
             let (literal, after) = string(rest)?;
             parts.push(Part::Literal(literal));
+            rest = after.trim_start();
+        } else if let Some((quote, after)) = quote_keyword(rest) {
+            parts.push(Part::Quote(quote));
             rest = after.trim_start();
         } else if let Some(inner) = rest.strip_prefix("attr(") {
             let close = inner.find(')')?;
@@ -49,6 +74,18 @@ pub fn parse(text: &str) -> Option<Vec<Part>> {
         return None;
     }
     Some(parts)
+}
+
+fn quote_keyword(text: &str) -> Option<(Quote, &str)> {
+    let end = text.find(char::is_whitespace).unwrap_or(text.len());
+    let quote = match text[..end].to_ascii_lowercase().as_str() {
+        "open-quote" => Quote::Open,
+        "close-quote" => Quote::Close,
+        "no-open-quote" => Quote::NoOpen,
+        "no-close-quote" => Quote::NoClose,
+        _ => return None,
+    };
+    Some((quote, &text[end..]))
 }
 
 fn is_name(name: &str) -> bool {
@@ -166,7 +203,13 @@ fn string(text: &str) -> Option<(String, &str)> {
     None
 }
 
-pub fn render(parts: &[Part], element: &ElementData, counters: &Counters) -> String {
+pub fn render(
+    parts: &[Part],
+    element: &ElementData,
+    counters: &Counters,
+    quotes: &[(String, String)],
+    depth: &mut usize,
+) -> String {
     let mut text = String::new();
     for part in parts {
         match part {
@@ -174,6 +217,26 @@ pub fn render(parts: &[Part], element: &ElementData, counters: &Counters) -> Str
             Part::Attr(name) => {
                 if let Some(value) = element.attributes.get(name) {
                     text.push_str(value);
+                }
+            }
+            Part::Quote(quote) => {
+                let pair = |level: usize| quotes.get(level.min(quotes.len().saturating_sub(1)));
+                match quote {
+                    Quote::Open => {
+                        if let Some(pair) = pair(*depth) {
+                            text.push_str(&pair.0);
+                        }
+                        *depth += 1;
+                    }
+                    Quote::Close if *depth > 0 => {
+                        *depth -= 1;
+                        if let Some(pair) = pair(*depth) {
+                            text.push_str(&pair.1);
+                        }
+                    }
+                    Quote::NoOpen => *depth += 1,
+                    Quote::NoClose => *depth = depth.saturating_sub(1),
+                    Quote::Close => {}
                 }
             }
             Part::Counter { name, style } => {
