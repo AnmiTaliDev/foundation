@@ -47,7 +47,8 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 12] = [
+const INHERITED_PROPERTIES: [&str; 13] = [
+    "text-indent",
     "text-transform",
     "letter-spacing",
     "word-spacing",
@@ -193,6 +194,13 @@ pub enum TextAlign {
     Left,
     Center,
     Right,
+    Justify,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Indent {
+    pub px: f32,
+    pub percent: f32,
 }
 
 #[derive(Debug)]
@@ -548,7 +556,7 @@ fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
 
 fn resolve_spacing(values: &mut PropertyMap) {
     let font_size = font_size_of(values);
-    for name in ["letter-spacing", "word-spacing"] {
+    for name in ["letter-spacing", "word-spacing", "text-indent"] {
         if let Some(Value::Em(em)) = values.get(name) {
             let px = em * font_size;
             values.insert(name.to_string(), Value::Length(px));
@@ -774,8 +782,25 @@ impl<'a> StyledNode<'a> {
     pub fn text_align(&self) -> TextAlign {
         match self.value("text-align") {
             Some(Value::Keyword(keyword)) if keyword == "center" => TextAlign::Center,
-            Some(Value::Keyword(keyword)) if keyword == "right" => TextAlign::Right,
+            Some(Value::Keyword(keyword)) if keyword == "right" || keyword == "end" => {
+                TextAlign::Right
+            }
+            Some(Value::Keyword(keyword)) if keyword == "justify" => TextAlign::Justify,
             _ => TextAlign::Left,
+        }
+    }
+
+    pub fn text_indent(&self) -> Indent {
+        match self.value("text-indent") {
+            Some(Value::Length(px)) => Indent {
+                px: *px,
+                percent: 0.0,
+            },
+            Some(Value::Percent(percent)) => Indent {
+                px: 0.0,
+                percent: *percent,
+            },
+            _ => Indent::default(),
         }
     }
 

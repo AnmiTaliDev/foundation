@@ -16,7 +16,7 @@ use crate::inline::{
 use crate::list;
 use crate::picture::Picture;
 use crate::style::{
-    Clear, Content, Display, FlexDirection, Position, StyledNode, TextAlign, VerticalAlign,
+    Clear, Content, Display, FlexDirection, Indent, Position, StyledNode, TextAlign, VerticalAlign,
     Viewport,
 };
 
@@ -155,6 +155,7 @@ struct Flow<'a> {
     next_box_id: usize,
     counter: i32,
     vertical: VerticalAlign,
+    indent: Indent,
 }
 
 fn list_start(style: &StyledNode) -> i32 {
@@ -178,6 +179,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         next_box_id: 0,
         counter: list_start(style),
         vertical: VerticalAlign::Raise(0.0),
+        indent: style.text_indent(),
     };
     let align = style.text_align();
     let blockify = matches!(style.display(), Display::Flex | Display::Grid);
@@ -391,6 +393,11 @@ fn flush_items(align: TextAlign, flow: &mut Flow) {
             BoxKind::Anonymous(InlineContent {
                 items: std::mem::take(&mut flow.items),
                 align,
+                indent: if flow.children.is_empty() {
+                    flow.indent
+                } else {
+                    Indent::default()
+                },
             }),
             Vec::new(),
         ));
@@ -560,6 +567,7 @@ impl<'a> LayoutBox<'a> {
                                 BoxKind::Anonymous(InlineContent {
                                     items: Vec::new(),
                                     align: TextAlign::Left,
+                                    indent: Indent::default(),
                                 }),
                                 Vec::new(),
                             ),

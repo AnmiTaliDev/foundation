@@ -8,7 +8,7 @@ use crate::decoration::{Decoration, Line, LineStyle};
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
-use crate::style::{StyledNode, TextAlign, VerticalAlign, WhiteSpace};
+use crate::style::{Indent, StyledNode, TextAlign, VerticalAlign, WhiteSpace};
 use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +112,7 @@ pub enum InlineItem<'a> {
 pub struct InlineContent<'a> {
     pub items: Vec<InlineItem<'a>>,
     pub align: TextAlign,
+    pub indent: Indent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -520,6 +521,7 @@ pub fn layout_lines(
     };
     let mut x = 0.0;
     let mut top = 0.0;
+    let mut indent = content.indent.px + content.indent.percent / 100.0 * width;
 
     for word in &words {
         let word_width = word.width(fonts);
@@ -529,7 +531,16 @@ pub fn layout_lines(
         }
         let overflows = word.wraps() && x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
-            top += finish_line(&line, content.align, &area, top, fonts, &mut lines);
+            let justify = overflows && !word.break_before;
+            top += finish_line(
+                &mut line,
+                content.align,
+                justify,
+                &area,
+                top,
+                fonts,
+                &mut lines,
+            );
             line.clear();
             x = 0.0;
             space = 0.0;
@@ -541,6 +552,9 @@ pub fn layout_lines(
                 if word_width <= right - left || !floats.is_blocked_at(y) {
                     area.origin_x = left;
                     area.width = right - left;
+                    area.origin_x += indent;
+                    area.width -= indent;
+                    indent = 0.0;
                     break;
                 }
                 top = floats.next_clear_after(y) - origin_y;
@@ -554,15 +568,24 @@ pub fn layout_lines(
         x += space + word_width;
     }
     if !line.is_empty() {
-        top += finish_line(&line, content.align, &area, top, fonts, &mut lines);
+        top += finish_line(
+            &mut line,
+            content.align,
+            false,
+            &area,
+            top,
+            fonts,
+            &mut lines,
+        );
     }
     lines.height = top;
     lines
 }
 
 fn finish_line(
-    line: &[PlacedWord],
+    line: &mut [PlacedWord],
     align: TextAlign,
+    justify: bool,
     area: &Area,
     top: f32,
     fonts: &Fonts,
@@ -587,7 +610,7 @@ fn finish_line(
         above = above.max(word_above + raise);
         below = below.max(word_below - raise);
     }
-    for placed in line {
+    for placed in line.iter() {
         let (word_above, word_below) = placed.word.metrics(fonts);
         let extra = (word_above + word_below) - (above + below);
         match placed.word.vertical() {
@@ -613,11 +636,14 @@ fn finish_line(
     let last = &line[line.len() - 1];
     let line_width = last.offset + last.width;
     let shift = match align {
-        TextAlign::Left => 0.0,
+        TextAlign::Left | TextAlign::Justify => 0.0,
         TextAlign::Center => (area.width - line_width) / 2.0,
         TextAlign::Right => area.width - line_width,
     }
     .max(0.0);
+    if align == TextAlign::Justify && justify {
+        justify_line(line, area.width - line_width);
+    }
 
     let origin = area.origin_x + shift;
     for (index, placed) in line.iter().enumerate() {
@@ -664,6 +690,26 @@ fn finish_line(
     push_boxes(line, origin, &baselines, fonts, lines);
     push_rules(line, origin, &baselines, fonts, lines);
     above + below
+}
+
+fn justify_line(line: &mut [PlacedWord], extra: f32) {
+    let mut gaps = Vec::new();
+    for index in 1..line.len() {
+        if line[index].offset > line[index - 1].offset + line[index - 1].width {
+            gaps.push(index);
+        }
+    }
+    if extra <= 0.0 || gaps.is_empty() {
+        return;
+    }
+    let step = extra / gaps.len() as f32;
+    let mut shift = 0.0;
+    for (index, placed) in line.iter_mut().enumerate().skip(1) {
+        if gaps.contains(&index) {
+            shift += step;
+        }
+        placed.offset += shift;
+    }
 }
 
 struct Span {
