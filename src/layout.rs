@@ -304,8 +304,21 @@ fn collect_child<'a>(
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
                 let (width, height) = replaced_size(node, element, picture.as_deref(), None);
+                let natural = picture
+                    .as_deref()
+                    .map_or((0.0, 0.0), |p| (p.width as f32, p.height as f32));
+                let drawn = node.object_rect(
+                    Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width,
+                        height,
+                    },
+                    natural,
+                );
                 flow.items.push(InlineItem::Image(ImageRun {
                     picture,
+                    drawn,
                     width,
                     height,
                     font_size: node.font_size(),
@@ -546,7 +559,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 self.place_marker(style, fonts);
                 if let Some(replaced) = replaced {
-                    self.place_picture(replaced.picture);
+                    self.place_picture(style, replaced.picture);
                 }
                 if style.is_positioned() {
                     let area = self.dimensions.padding_box();
@@ -1270,10 +1283,13 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    fn place_picture(&mut self, picture: Option<Rc<Picture>>) {
+    fn place_picture(&mut self, style: &StyledNode, picture: Option<Rc<Picture>>) {
         if let Some(picture) = picture {
+            let rect = self.dimensions.content;
+            let drawn = style.object_rect(rect, (picture.width as f32, picture.height as f32));
             self.images.push(ImageFragment {
-                rect: self.dimensions.content,
+                rect,
+                drawn,
                 picture,
             });
         }

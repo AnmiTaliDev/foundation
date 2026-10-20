@@ -975,6 +975,25 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             _ => Vec::new(),
         };
     }
+    if name == "object-fit" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword))
+                if matches!(
+                    keyword.as_str(),
+                    "fill" | "contain" | "cover" | "none" | "scale-down"
+                ) =>
+            {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
+    if name == "object-position" {
+        return expand_position(&split_values(value), "object-position");
+    }
     if name == "aspect-ratio" {
         return match parse_ratio(value) {
             Some(value) => vec![Declaration { name, value }],

@@ -12,6 +12,7 @@ use crate::float::Side;
 use crate::generated;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
+use crate::layout::Rect;
 use crate::radius::Radii;
 use crate::selector::{self, PseudoElement, Scope};
 use crate::shadow::Shadow;
@@ -1501,6 +1502,35 @@ impl<'a> StyledNode<'a> {
                 Some((length - self.box_extras(name, percent_base)).max(0.0))
             }
             length => length,
+        }
+    }
+
+    pub fn object_rect(&self, rect: Rect, natural: (f32, f32)) -> Rect {
+        let (natural_width, natural_height) = natural;
+        if natural_width <= 0.0 || natural_height <= 0.0 {
+            return rect;
+        }
+        let contain = (rect.width / natural_width).min(rect.height / natural_height);
+        let cover = (rect.width / natural_width).max(rect.height / natural_height);
+        let scale = match self.keyword("object-fit") {
+            Some("contain") => contain,
+            Some("cover") => cover,
+            Some("none") => 1.0,
+            Some("scale-down") => contain.min(1.0),
+            _ => return rect,
+        };
+        let width = natural_width * scale;
+        let height = natural_height * scale;
+        let offset = |name: &str, free: f32| match self.value(name) {
+            None => free / 2.0,
+            Some(Value::Percent(percent)) => percent / 100.0 * free,
+            value => self.length_from(value, Some(0.0), Some(0.0)).unwrap_or(0.0),
+        };
+        Rect {
+            x: rect.x + offset("object-position-x", rect.width - width),
+            y: rect.y + offset("object-position-y", rect.height - height),
+            width,
+            height,
         }
     }
 

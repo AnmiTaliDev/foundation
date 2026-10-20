@@ -668,7 +668,19 @@ fn content_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     }
     commands.extend(rule_commands(true));
     for image in &layout_box.images {
-        commands.push(DisplayCommand::Image(image.clone()));
+        if image.drawn == image.rect {
+            commands.push(DisplayCommand::Image(image.clone()));
+            continue;
+        }
+        commands.push(DisplayCommand::BeginClip(Clip {
+            rect: image.rect,
+            radii: Radii::default(),
+        }));
+        commands.push(DisplayCommand::Image(ImageFragment {
+            rect: image.drawn,
+            ..image.clone()
+        }));
+        commands.push(DisplayCommand::EndGroup);
     }
     commands
 }

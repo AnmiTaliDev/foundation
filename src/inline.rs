@@ -74,6 +74,7 @@ pub struct PlacedBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageRun {
     pub picture: Option<Rc<Picture>>,
+    pub drawn: Rect,
     pub width: f32,
     pub height: f32,
     pub font_size: f32,
@@ -150,6 +151,7 @@ pub struct InlineBoxFragment {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageFragment {
     pub rect: Rect,
+    pub drawn: Rect,
     pub picture: Rc<Picture>,
 }
 
@@ -739,12 +741,19 @@ fn finish_line(
             }),
             Piece::Image(image) => {
                 if let Some(picture) = &image.picture {
+                    let top = baseline - image.height;
                     lines.images.push(ImageFragment {
                         rect: Rect {
                             x,
-                            y: baseline - image.height,
+                            y: top,
                             width: image.width,
                             height: image.height,
+                        },
+                        drawn: Rect {
+                            x: x + image.drawn.x,
+                            y: top + image.drawn.y,
+                            width: image.drawn.width,
+                            height: image.drawn.height,
                         },
                         picture: picture.clone(),
                     });
