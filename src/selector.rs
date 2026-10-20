@@ -11,7 +11,14 @@ pub struct Selector {
     pub classes: Vec<String>,
     pub attributes: Vec<Attribute>,
     pub pseudo: Vec<Pseudo>,
+    pub pseudo_element: Option<PseudoElement>,
     pub parent: Option<(Combinator, Box<Selector>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PseudoElement {
+    Before,
+    After,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,7 +75,7 @@ impl Selector {
         let mut specificity = (
             usize::from(self.id.is_some()),
             self.classes.len() + self.attributes.len(),
-            usize::from(self.tag_name.is_some()),
+            usize::from(self.tag_name.is_some()) + usize::from(self.pseudo_element.is_some()),
         );
         for pseudo in &self.pseudo {
             match pseudo {
@@ -169,6 +176,9 @@ fn parse_selector(text: &str) -> Option<Selector> {
         let mut compound = parse_compound(&rest[..end])?;
         rest = &rest[end..];
         if let Some(left) = result {
+            if left.pseudo_element.is_some() {
+                return None;
+            }
             let kind = combinator.take().unwrap_or(Combinator::Descendant);
             compound.parent = Some((kind, Box::new(left)));
         }
@@ -187,6 +197,7 @@ fn parse_compound(text: &str) -> Option<Selector> {
         classes: Vec::new(),
         attributes: Vec::new(),
         pseudo: Vec::new(),
+        pseudo_element: None,
         parent: None,
     };
     let mut rest = text;
@@ -218,10 +229,19 @@ fn parse_compound(text: &str) -> Option<Selector> {
             let close = closing(after, ']')?;
             selector.attributes.push(parse_attribute(&after[..close])?);
             rest = &after[close + 1..];
+        } else if let Some(after) = rest.strip_prefix("::") {
+            let name = take_ident(after);
+            selector.pseudo_element = Some(parse_pseudo_element(name)?);
+            rest = &after[name.len()..];
         } else {
             let after = rest.strip_prefix(':')?;
             let name = take_ident(after);
             let after_name = &after[name.len()..];
+            if matches!(name.to_ascii_lowercase().as_str(), "before" | "after") {
+                selector.pseudo_element = Some(parse_pseudo_element(name)?);
+                rest = after_name;
+                continue;
+            }
             let (argument, remaining) = if let Some(inner) = after_name.strip_prefix('(') {
                 let close = closing(inner, ')')?;
                 (Some(&inner[..close]), &inner[close + 1..])
@@ -235,6 +255,25 @@ fn parse_compound(text: &str) -> Option<Selector> {
         }
     }
     Some(selector)
+}
+
+fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
+    match name.to_ascii_lowercase().as_str() {
+        "before" => Some(PseudoElement::Before),
+        "after" => Some(PseudoElement::After),
+        _ => None,
+    }
+}
+
+fn parse_nested(text: &str) -> Option<Vec<Selector>> {
+    let list = parse_list(text)?;
+    if list
+        .iter()
+        .any(|selector| selector.pseudo_element.is_some())
+    {
+        return None;
+    }
+    Some(list)
 }
 
 fn closing(text: &str, close: char) -> Option<usize> {
@@ -341,9 +380,9 @@ fn parse_pseudo(name: &str, argument: Option<&str>) -> Option<Vec<Pseudo>> {
             let (a, b) = parse_nth(text)?;
             nth(a, b, name.contains("last"), name.ends_with("type"))
         }
-        ("not", Some(text)) => Pseudo::Not(parse_list(text)?),
-        ("is", Some(text)) => Pseudo::Is(parse_list(text)?),
-        ("where", Some(text)) => Pseudo::Where(parse_list(text)?),
+        ("not", Some(text)) => Pseudo::Not(parse_nested(text)?),
+        ("is", Some(text)) => Pseudo::Is(parse_nested(text)?),
+        ("where", Some(text)) => Pseudo::Where(parse_nested(text)?),
         _ => return None,
     };
     Some(vec![pseudo])
@@ -415,32 +454,41 @@ fn sibling_position(scope: Scope, last: bool, of_type: bool) -> i32 {
     count as i32 + 1
 }
 
-pub fn matches(scope: Scope, ancestors: &[Scope], selector: &Selector) -> bool {
+pub fn matches(
+    scope: Scope,
+    ancestors: &[Scope],
+    selector: &Selector,
+    pseudo_element: Option<PseudoElement>,
+) -> bool {
+    selector.pseudo_element == pseudo_element && matches_chain(scope, ancestors, selector)
+}
+
+fn matches_chain(scope: Scope, ancestors: &[Scope], selector: &Selector) -> bool {
     if !matches_compound(scope, ancestors, selector) {
         return false;
     }
     match &selector.parent {
         None => true,
         Some((Combinator::Child, parent)) => match ancestors.split_last() {
-            Some((nearest, rest)) => matches(*nearest, rest, parent),
+            Some((nearest, rest)) => matches_chain(*nearest, rest, parent),
             None => false,
         },
         Some((Combinator::Descendant, parent)) => {
             let mut end = ancestors.len();
             while end > 0 {
                 end -= 1;
-                if matches(ancestors[end], &ancestors[..end], parent) {
+                if matches_chain(ancestors[end], &ancestors[..end], parent) {
                     return true;
                 }
             }
             false
         }
         Some((Combinator::Adjacent, parent)) => previous_sibling(scope, scope.position)
-            .is_some_and(|previous| matches(previous, ancestors, parent)),
+            .is_some_and(|previous| matches_chain(previous, ancestors, parent)),
         Some((Combinator::Sibling, parent)) => {
             let mut before = scope.position;
             while let Some(previous) = previous_sibling(scope, before) {
-                if matches(previous, ancestors, parent) {
+                if matches_chain(previous, ancestors, parent) {
                     return true;
                 }
                 before = previous.position;
@@ -528,9 +576,9 @@ fn pseudo_matches(scope: Scope, ancestors: &[Scope], pseudo: &Pseudo) -> bool {
         } => nth_matches(*a, *b, sibling_position(scope, *last, *of_type)),
         Pseudo::Not(list) => !list
             .iter()
-            .any(|selector| matches(scope, ancestors, selector)),
+            .any(|selector| matches_chain(scope, ancestors, selector)),
         Pseudo::Is(list) | Pseudo::Where(list) => list
             .iter()
-            .any(|selector| matches(scope, ancestors, selector)),
+            .any(|selector| matches_chain(scope, ancestors, selector)),
     }
 }

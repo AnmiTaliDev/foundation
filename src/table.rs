@@ -160,7 +160,7 @@ impl<'a> LayoutBox<'a> {
                             span_attribute(element, "colspan"),
                             span_attribute(element, "rowspan"),
                         ),
-                        Content::Text(_) => (1, 1),
+                        Content::Text(_) | Content::Pseudo => (1, 1),
                     },
                     BoxKind::Anonymous(_) => (1, 1),
                 };

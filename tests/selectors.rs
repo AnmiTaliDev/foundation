@@ -254,7 +254,7 @@ fn selector_list_with_functional_pseudo_commas() {
 fn invalid_selectors_drop_the_rule() {
     let body = "<p>a</p>";
     for selector in [
-        "p::before",
+        "p::first-line",
         "p:nth-child(x)",
         "p:unknown",
         "p:not()",

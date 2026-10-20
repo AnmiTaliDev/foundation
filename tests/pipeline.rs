@@ -56,7 +56,7 @@ fn html_tolerates_unclosed_and_stray_tags() {
 #[test]
 fn css_parses_selectors_and_expands_shorthand() {
     let sheet = css::parse(
-        "div.a#b, p { margin: 1px 2px; color: #fff; } /* c */ span { width: 10px } a::before { color: red }",
+        "div.a#b, p { margin: 1px 2px; color: #fff; } /* c */ span { width: 10px } a::first-line { color: red }",
     );
     assert_eq!(sheet.rules.len(), 2);
     let first = &sheet.rules[0];

@@ -261,7 +261,7 @@ fn collect_child<'a>(
                     .attributes
                     .get("value")
                     .and_then(|value| value.trim().parse().ok()),
-                Content::Text(_) => None,
+                Content::Text(_) | Content::Pseudo => None,
             }
             .unwrap_or(flow.counter);
             flow.counter = value.saturating_add(1);
@@ -277,7 +277,7 @@ fn collect_child<'a>(
             font_size: node.font_size(),
             vertical: combine_vertical(flow.vertical, node.inline_vertical_align()),
         })),
-        Display::Inline => match node.content {
+        Display::Inline => match &node.content {
             Content::Text(text) => flow.items.push(InlineItem::Text(Run {
                 text: transform_text::apply(text, node.text_transform()),
                 color: node.text_color(),
@@ -304,7 +304,7 @@ fn collect_child<'a>(
                     vertical: combine_vertical(flow.vertical, node.inline_vertical_align()),
                 }));
             }
-            Content::Element(_) => {
+            Content::Element(_) | Content::Pseudo => {
                 let outer_vertical = flow.vertical;
                 flow.vertical = combine_vertical(outer_vertical, node.inline_vertical_align());
                 let style = inline_box_style(node, flow.next_box_id);

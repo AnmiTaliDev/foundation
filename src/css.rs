@@ -3,6 +3,7 @@
 use crate::calc::{self, Linear};
 use crate::color::{self, Rgba};
 use crate::decoration::{self, Decoration};
+use crate::generated;
 use crate::gradient::{self, Gradient};
 use crate::gridspec::{self, Line, TrackList};
 use crate::media::MediaList;
@@ -11,7 +12,7 @@ use crate::shadow::{self, Shadow};
 use crate::supports;
 use crate::transform::{self, Function};
 
-pub use crate::selector::{Combinator, Pseudo, Selector, Specificity};
+pub use crate::selector::{Combinator, Pseudo, PseudoElement, Selector, Specificity};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stylesheet {
@@ -67,6 +68,7 @@ pub enum Value {
     Areas(Vec<Vec<String>>),
     Shadows(Vec<Shadow>),
     Decorations(Vec<Decoration>),
+    Content(Vec<generated::Part>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -278,9 +280,14 @@ fn scan_top_level(source: &str) -> Vec<TopLevel<'_>> {
     let mut braces = 0usize;
     let mut parens = 0usize;
     let mut quote: Option<char> = None;
+    let mut escaped = false;
     for (index, c) in source.char_indices() {
         if let Some(open) = quote {
-            if c == open {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
                 quote = None;
             }
             continue;
@@ -591,7 +598,7 @@ pub struct DeclarationBlock {
 
 pub fn parse_declaration_block(block: &str) -> DeclarationBlock {
     let mut result = DeclarationBlock::default();
-    for item in block.split(';') {
+    for item in split_declarations(block) {
         let (item, important) = split_important(item);
         let target = if important {
             &mut result.important
@@ -622,6 +629,44 @@ fn split_important(item: &str) -> (&str, bool) {
     (item, false)
 }
 
+fn expand_content(name: String, value: &str) -> Vec<Declaration> {
+    let lower = value.to_ascii_lowercase();
+    let value = if lower == "none" || lower == "normal" {
+        Value::Keyword(lower)
+    } else {
+        match generated::parse(value) {
+            Some(parts) => Value::Content(parts),
+            None => return Vec::new(),
+        }
+    };
+    vec![Declaration { name, value }]
+}
+
+fn split_declarations(block: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, c) in block.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+        } else if c == ';' {
+            items.push(&block[start..index]);
+            start = index + 1;
+        }
+    }
+    items.push(&block[start..]);
+    items
+}
+
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
@@ -641,6 +686,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     }
     let value = value.trim();
 
+    if name == "content" {
+        return expand_content(name, value);
+    }
     if name == "border" {
         return expand_border(value);
     }

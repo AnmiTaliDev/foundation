@@ -9,6 +9,7 @@ pub mod dom;
 pub mod entities;
 pub mod flex;
 pub mod float;
+pub mod generated;
 pub mod gradient;
 mod grid;
 pub mod gridspec;

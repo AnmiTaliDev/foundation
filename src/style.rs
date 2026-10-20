@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::color::Rgba;
@@ -7,10 +8,11 @@ use crate::css::{self, Color, Declaration, Rule, Specificity, Stylesheet, Value}
 use crate::decoration::{self, Decoration, LineStyle};
 use crate::dom::{ElementData, Node, NodeType};
 use crate::float::Side;
+use crate::generated;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
 use crate::radius::Radii;
-use crate::selector::{self, Scope};
+use crate::selector::{self, PseudoElement, Scope};
 use crate::shadow::Shadow;
 use crate::transform::{self, Matrix};
 
@@ -206,7 +208,8 @@ pub struct Indent {
 #[derive(Debug)]
 pub enum Content<'a> {
     Element(&'a ElementData),
-    Text(&'a str),
+    Text(Cow<'a, str>),
+    Pseudo,
 }
 
 #[derive(Debug)]
@@ -364,18 +367,10 @@ fn style_node<'a>(
     ancestors: &mut Vec<Scope<'a>>,
     root_font_size: f32,
 ) -> StyledNode<'a> {
-    let mut inherited = PropertyMap::new();
-    for name in INHERITED_PROPERTIES {
-        if let Some(value) = parent.get(name) {
-            inherited.insert(name.to_string(), value.clone());
-        }
-    }
-    if let Some(active) = parent.get(ACTIVE_DECORATIONS) {
-        inherited.insert(ACTIVE_DECORATIONS.to_string(), active.clone());
-    }
+    let inherited = inherit(parent);
     match &node.node_type {
         NodeType::Text(text) => StyledNode {
-            content: Content::Text(text),
+            content: Content::Text(Cow::Borrowed(text)),
             specified_values: inherited,
             children: Vec::new(),
         },
@@ -385,20 +380,32 @@ fn style_node<'a>(
                 siblings,
                 position,
             };
-            let mut values = specified_values(scope, ancestors, context, inherited);
-            resolve_viewport_units(&mut values, context.viewport, root_font_size);
-            resolve_font_size(&mut values, parent);
-            resolve_spacing(&mut values);
-            resolve_line_height(&mut values);
-            resolve_current_color(&mut values, parent);
-            resolve_decorations(&mut values, parent);
+            let mut values = specified_values(scope, ancestors, context, inherited, None);
+            compute(&mut values, parent, context, root_font_size);
             let children_root_font_size = if ancestors.is_empty() {
                 font_size_of(&values)
             } else {
                 root_font_size
             };
+            let before = pseudo_node(
+                scope,
+                ancestors,
+                context,
+                &values,
+                PseudoElement::Before,
+                root_font_size,
+            );
+            let after = pseudo_node(
+                scope,
+                ancestors,
+                context,
+                &values,
+                PseudoElement::After,
+                root_font_size,
+            );
             ancestors.push(scope);
             let mut children = Vec::new();
+            children.extend(before);
             for (index, child) in node.children.iter().enumerate() {
                 children.push(style_node(
                     child,
@@ -411,6 +418,7 @@ fn style_node<'a>(
                 ));
             }
             ancestors.pop();
+            children.extend(after);
             StyledNode {
                 content: Content::Element(element),
                 specified_values: values,
@@ -418,6 +426,64 @@ fn style_node<'a>(
             }
         }
     }
+}
+
+fn inherit(parent: &PropertyMap) -> PropertyMap {
+    let mut inherited = PropertyMap::new();
+    for name in INHERITED_PROPERTIES {
+        if let Some(value) = parent.get(name) {
+            inherited.insert(name.to_string(), value.clone());
+        }
+    }
+    if let Some(active) = parent.get(ACTIVE_DECORATIONS) {
+        inherited.insert(ACTIVE_DECORATIONS.to_string(), active.clone());
+    }
+    inherited
+}
+
+fn compute(
+    values: &mut PropertyMap,
+    parent: &PropertyMap,
+    context: &StyleContext,
+    root_font_size: f32,
+) {
+    resolve_viewport_units(values, context.viewport, root_font_size);
+    resolve_font_size(values, parent);
+    resolve_spacing(values);
+    resolve_line_height(values);
+    resolve_current_color(values, parent);
+    resolve_decorations(values, parent);
+}
+
+fn pseudo_node<'a>(
+    scope: Scope,
+    ancestors: &[Scope],
+    context: &StyleContext,
+    parent: &PropertyMap,
+    which: PseudoElement,
+    root_font_size: f32,
+) -> Option<StyledNode<'a>> {
+    let mut inherited = inherit(parent);
+    inherited.insert("display".to_string(), Value::Keyword("inline".to_string()));
+    let mut values = specified_values(scope, ancestors, context, inherited, Some(which));
+    let Some(Value::Content(parts)) = values.get("content") else {
+        return None;
+    };
+    let text = generated::render(parts, scope.element);
+    compute(&mut values, parent, context, root_font_size);
+    let mut children = Vec::new();
+    if !text.is_empty() {
+        children.push(StyledNode {
+            content: Content::Text(Cow::Owned(text)),
+            specified_values: inherit(&values),
+            children: Vec::new(),
+        });
+    }
+    Some(StyledNode {
+        content: Content::Pseudo,
+        specified_values: values,
+        children,
+    })
 }
 
 fn font_size_of(values: &PropertyMap) -> f32 {
@@ -595,6 +661,7 @@ fn specified_values(
     ancestors: &[Scope],
     context: &StyleContext,
     inherited: PropertyMap,
+    pseudo_element: Option<PseudoElement>,
 ) -> PropertyMap {
     let viewport = context.viewport;
     let layers = &context.stylesheet.layers;
@@ -607,7 +674,7 @@ fn specified_values(
         {
             continue;
         }
-        let Some(specificity) = match_rule(scope, ancestors, rule) else {
+        let Some(specificity) = match_rule(scope, ancestors, rule, pseudo_element) else {
             continue;
         };
         let layer = rule
@@ -627,6 +694,7 @@ fn specified_values(
         .element
         .attributes
         .get("style")
+        .filter(|_| pseudo_element.is_none())
         .map(|text| css::parse_declaration_block(text))
         .unwrap_or_default();
     for declaration in &inline.normal {
@@ -644,10 +712,15 @@ fn specified_values(
     values
 }
 
-fn match_rule(scope: Scope, ancestors: &[Scope], rule: &Rule) -> Option<Specificity> {
+fn match_rule(
+    scope: Scope,
+    ancestors: &[Scope],
+    rule: &Rule,
+    pseudo_element: Option<PseudoElement>,
+) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in &rule.selectors {
-        if selector::matches(scope, ancestors, selector) {
+        if selector::matches(scope, ancestors, selector, pseudo_element) {
             let specificity = selector.specificity();
             if best.is_none_or(|current| specificity > current) {
                 best = Some(specificity);
