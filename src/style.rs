@@ -47,7 +47,10 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 9] = [
+const INHERITED_PROPERTIES: [&str; 12] = [
+    "text-transform",
+    "letter-spacing",
+    "word-spacing",
     "white-space",
     "list-style-type",
     "color",
@@ -149,6 +152,14 @@ pub enum VerticalAlign {
     TextBottom,
     Top,
     Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextTransform {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -360,6 +371,7 @@ fn style_node<'a>(
             let mut values = specified_values(element, ancestors, context, inherited);
             resolve_viewport_units(&mut values, context.viewport, root_font_size);
             resolve_font_size(&mut values, parent);
+            resolve_spacing(&mut values);
             resolve_line_height(&mut values);
             resolve_current_color(&mut values, parent);
             resolve_decorations(&mut values, parent);
@@ -531,6 +543,16 @@ fn resolve_current_color(values: &mut PropertyMap, parent: &PropertyMap) {
     });
     if has_border && !values.contains_key("border-color") {
         values.insert("border-color".to_string(), current);
+    }
+}
+
+fn resolve_spacing(values: &mut PropertyMap) {
+    let font_size = font_size_of(values);
+    for name in ["letter-spacing", "word-spacing"] {
+        if let Some(Value::Em(em)) = values.get(name) {
+            let px = em * font_size;
+            values.insert(name.to_string(), Value::Length(px));
+        }
     }
 }
 
@@ -713,6 +735,29 @@ impl<'a> StyledNode<'a> {
             Some(Value::Number(factor)) => Some(factor * self.font_size()),
             Some(Value::Length(px)) => Some(*px),
             _ => None,
+        }
+    }
+
+    pub fn text_transform(&self) -> TextTransform {
+        match self.value("text-transform") {
+            Some(Value::Keyword(keyword)) if keyword == "uppercase" => TextTransform::Uppercase,
+            Some(Value::Keyword(keyword)) if keyword == "lowercase" => TextTransform::Lowercase,
+            Some(Value::Keyword(keyword)) if keyword == "capitalize" => TextTransform::Capitalize,
+            _ => TextTransform::None,
+        }
+    }
+
+    pub fn letter_spacing(&self) -> f32 {
+        match self.value("letter-spacing") {
+            Some(Value::Length(px)) => *px,
+            _ => 0.0,
+        }
+    }
+
+    pub fn word_spacing(&self) -> f32 {
+        match self.value("word-spacing") {
+            Some(Value::Length(px)) => *px,
+            _ => 0.0,
         }
     }
 

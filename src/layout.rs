@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::text::Fonts;
+use crate::transform_text;
 
 use crate::css::Value;
 use crate::dom::ElementData;
@@ -276,7 +277,7 @@ fn collect_child<'a>(
         })),
         Display::Inline => match node.content {
             Content::Text(text) => flow.items.push(InlineItem::Text(Run {
-                text,
+                text: transform_text::apply(text, node.text_transform()),
                 color: node.text_color(),
                 alpha: node.text_alpha(),
                 font_size: node.font_size(),
@@ -287,6 +288,8 @@ fn collect_child<'a>(
                 white_space: node.white_space(),
                 decorations: node.decorations(),
                 vertical: flow.vertical,
+                letter_spacing: node.letter_spacing(),
+                word_spacing: node.word_spacing(),
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -1065,6 +1068,8 @@ impl<'a> LayoutBox<'a> {
             alpha: style.text_alpha(),
             font_size: size,
             face,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
         };
         self.fragments.push(fragment);
     }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::css::Color;
@@ -12,7 +13,7 @@ use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Run<'a> {
-    pub text: &'a str,
+    pub text: Cow<'a, str>,
     pub color: Color,
     pub alpha: u8,
     pub font_size: f32,
@@ -23,6 +24,22 @@ pub struct Run<'a> {
     pub white_space: WhiteSpace,
     pub decorations: &'a [Decoration],
     pub vertical: VerticalAlign,
+    pub letter_spacing: f32,
+    pub word_spacing: f32,
+}
+
+impl Run<'_> {
+    fn measure(&self, fonts: &Fonts, face: usize, text: &str) -> f32 {
+        let chars = text.chars().count() as f32;
+        let spaces = text.chars().filter(|c| *c == ' ').count() as f32;
+        fonts.width(face, text, self.font_size)
+            + chars * self.letter_spacing
+            + spaces * self.word_spacing
+    }
+
+    fn gap(&self, fonts: &Fonts, face: usize) -> f32 {
+        fonts.width(face, " ", self.font_size) + self.letter_spacing + self.word_spacing
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +123,8 @@ pub struct Fragment {
     pub alpha: u8,
     pub font_size: f32,
     pub face: usize,
+    pub letter_spacing: f32,
+    pub word_spacing: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,6 +211,13 @@ impl Word<'_> {
         }
     }
 
+    fn space(&self, fonts: &Fonts) -> f32 {
+        match &self.piece {
+            Piece::Text { run, face, .. } => run.gap(fonts, *face),
+            _ => fonts.width(self.face(), " ", self.font_size()),
+        }
+    }
+
     fn vertical(&self) -> VerticalAlign {
         match &self.piece {
             Piece::Text { run, .. } => run.vertical,
@@ -234,7 +260,7 @@ impl Word<'_> {
 
     fn width(&self, fonts: &Fonts) -> f32 {
         let content = match &self.piece {
-            Piece::Text { text, run, face } => fonts.width(*face, text, run.font_size),
+            Piece::Text { text, run, face } => run.measure(fonts, *face, text),
             Piece::Image(image) => image.width,
             Piece::Block { metrics, .. } => metrics.width,
         };
@@ -388,7 +414,9 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts) -> Vec<Word<'a
     let mut start = 0;
     let mut piece_width = 0.0;
     for (index, c) in text.char_indices() {
-        let advance = fonts.advance(face, c, run.font_size);
+        let advance = fonts.advance(face, c, run.font_size)
+            + run.letter_spacing
+            + if c == ' ' { run.word_spacing } else { 0.0 };
         if piece_width + advance > width && index > start {
             pieces.push(&text[start..index]);
             start = index;
@@ -446,7 +474,7 @@ pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[Block
             total = 0.0;
         }
         if total > 0.0 && word.space_before {
-            total += fonts.width(word.face(), " ", word.font_size());
+            total += word.space(fonts);
         }
         total += word.width(fonts);
         widest = widest.max(total);
@@ -462,7 +490,7 @@ pub fn min_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[Block
         let mut width = word.width(fonts);
         if !word.wraps() && !word.break_before && current > 0.0 {
             if word.space_before {
-                width += fonts.width(word.face(), " ", word.font_size());
+                width += word.space(fonts);
             }
             current += width;
         } else {
@@ -497,7 +525,7 @@ pub fn layout_lines(
         let word_width = word.width(fonts);
         let mut space = 0.0;
         if x > 0.0 && word.space_before {
-            space = fonts.width(word.face(), " ", word.font_size());
+            space = word.space(fonts);
         }
         let overflows = word.wraps() && x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
@@ -609,6 +637,8 @@ fn finish_line(
                     alpha: run.alpha,
                     font_size: run.font_size,
                     face: *face,
+                    letter_spacing: run.letter_spacing,
+                    word_spacing: run.word_spacing,
                 });
             }
             Piece::Block { index, .. } => lines.blocks.push(PlacedBlock {
@@ -659,7 +689,7 @@ fn push_rules(
             continue;
         };
         let x0 = origin + placed.offset + placed.word.lead();
-        let x1 = x0 + fonts.width(*face, text, run.font_size);
+        let x1 = x0 + run.measure(fonts, *face, text);
         for decoration in run.decorations {
             let joined = spans.iter_mut().find(|span| {
                 span.decoration == *decoration

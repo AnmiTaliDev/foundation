@@ -224,7 +224,9 @@ impl Canvas {
                     self.put(x as usize, y as usize, fragment.color, coverage);
                 }
             }
-            pen_x += fonts.advance(fragment.face, c, fragment.font_size);
+            pen_x += fonts.advance(fragment.face, c, fragment.font_size)
+                + fragment.letter_spacing
+                + if c == ' ' { fragment.word_spacing } else { 0.0 };
         }
     }
 

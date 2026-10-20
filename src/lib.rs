@@ -29,6 +29,7 @@ pub mod supports;
 mod table;
 pub mod text;
 pub mod transform;
+mod transform_text;
 
 pub use page::{Frame, Page};
 
