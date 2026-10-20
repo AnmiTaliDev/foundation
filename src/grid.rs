@@ -822,10 +822,24 @@ impl<'a> LayoutBox<'a> {
                     Some(style) => crate::layout::horizontal_extras(style, base),
                     None => 0.0,
                 };
+                let min = match item.style {
+                    Some(style) => match style.length_or_auto("min-width", None, Some(base)) {
+                        Some(min) => min,
+                        None if style.establishes_clip() => 0.0,
+                        None => {
+                            let content = child.min_content_width(fonts, images, base);
+                            match style.length_or_auto("width", None, Some(base)) {
+                                Some(width) => content.min(width),
+                                None => content,
+                            }
+                        }
+                    },
+                    None => child.intrinsic_width(Intrinsic::Min, fonts, images, base),
+                };
                 Contribution {
                     start: item.placement.column,
                     span: item.placement.columns,
-                    min: child.intrinsic_width(Intrinsic::Min, fonts, images, base) + extras,
+                    min: min + extras,
                     max: child.intrinsic_width(Intrinsic::Max, fonts, images, base) + extras,
                 }
             })
