@@ -7,7 +7,7 @@ use crate::decoration::{Decoration, Line, LineStyle};
 use crate::float::FloatContext;
 use crate::layout::Rect;
 use crate::picture::Picture;
-use crate::style::{StyledNode, TextAlign, WhiteSpace};
+use crate::style::{StyledNode, TextAlign, VerticalAlign, WhiteSpace};
 use crate::text::Fonts;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,12 +22,14 @@ pub struct Run<'a> {
     pub italic: bool,
     pub white_space: WhiteSpace,
     pub decorations: &'a [Decoration],
+    pub vertical: VerticalAlign,
 }
 
 #[derive(Debug, Clone)]
 pub struct BlockRun<'a> {
     pub node: &'a StyledNode<'a>,
     pub font_size: f32,
+    pub vertical: VerticalAlign,
 }
 
 impl PartialEq for BlockRun<'_> {
@@ -56,6 +58,7 @@ pub struct ImageRun {
     pub width: f32,
     pub height: f32,
     pub font_size: f32,
+    pub vertical: VerticalAlign,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +189,31 @@ impl Word<'_> {
         match &self.piece {
             Piece::Text { face, .. } => *face,
             Piece::Image(_) | Piece::Block { .. } => 0,
+        }
+    }
+
+    fn vertical(&self) -> VerticalAlign {
+        match &self.piece {
+            Piece::Text { run, .. } => run.vertical,
+            Piece::Image(image) => image.vertical,
+            Piece::Block { run, .. } => run.vertical,
+        }
+    }
+
+    fn metrics(&self, fonts: &Fonts) -> (f32, f32) {
+        match &self.piece {
+            Piece::Text { run, face, .. } => {
+                let ascent = fonts.ascent(*face, run.font_size);
+                let descent = fonts.descent(*face, run.font_size);
+                let line_height = match run.line_height {
+                    Some(height) => height,
+                    None => fonts.line_height(*face, run.font_size),
+                };
+                let above = (line_height - ascent - descent) / 2.0 + ascent;
+                (above, line_height - above)
+            }
+            Piece::Image(image) => (image.height, 0.0),
+            Piece::Block { metrics, .. } => (metrics.baseline, metrics.height - metrics.baseline),
         }
     }
 
@@ -514,26 +542,45 @@ fn finish_line(
 ) -> f32 {
     let mut above: f32 = 0.0;
     let mut below: f32 = 0.0;
+    let mut raises = vec![0.0f32; line.len()];
+    for (index, placed) in line.iter().enumerate() {
+        let (word_above, word_below) = placed.word.metrics(fonts);
+        let size = placed.word.font_size();
+        let parent_ascent = fonts.ascent(placed.word.face(), size);
+        let parent_descent = fonts.descent(placed.word.face(), size);
+        let raise = match placed.word.vertical() {
+            VerticalAlign::Raise(raise) => raise,
+            VerticalAlign::Middle => 0.27 * size - (word_above - word_below) / 2.0,
+            VerticalAlign::TextTop => parent_ascent - word_above,
+            VerticalAlign::TextBottom => word_below - parent_descent,
+            VerticalAlign::Top | VerticalAlign::Bottom => continue,
+        };
+        raises[index] = raise;
+        above = above.max(word_above + raise);
+        below = below.max(word_below - raise);
+    }
     for placed in line {
-        match &placed.word.piece {
-            Piece::Text { run, face, .. } => {
-                let ascent = fonts.ascent(*face, run.font_size);
-                let descent = fonts.descent(*face, run.font_size);
-                let line_height = match run.line_height {
-                    Some(height) => height,
-                    None => fonts.line_height(*face, run.font_size),
-                };
-                let word_above = (line_height - ascent - descent) / 2.0 + ascent;
-                above = above.max(word_above);
-                below = below.max(line_height - word_above);
-            }
-            Piece::Image(image) => above = above.max(image.height),
-            Piece::Block { metrics, .. } => {
-                above = above.max(metrics.baseline);
-                below = below.max(metrics.height - metrics.baseline);
-            }
+        let (word_above, word_below) = placed.word.metrics(fonts);
+        let extra = (word_above + word_below) - (above + below);
+        match placed.word.vertical() {
+            VerticalAlign::Top if extra > 0.0 => below += extra,
+            VerticalAlign::Bottom if extra > 0.0 => above += extra,
+            _ => {}
         }
     }
+    let baselines: Vec<f32> = line
+        .iter()
+        .enumerate()
+        .map(|(index, placed)| {
+            let (word_above, word_below) = placed.word.metrics(fonts);
+            let line_top = area.origin_y + top;
+            match placed.word.vertical() {
+                VerticalAlign::Top => line_top + word_above,
+                VerticalAlign::Bottom => line_top + above + below - word_below,
+                _ => line_top + above - raises[index],
+            }
+        })
+        .collect();
 
     let last = &line[line.len() - 1];
     let line_width = last.offset + last.width;
@@ -545,8 +592,8 @@ fn finish_line(
     .max(0.0);
 
     let origin = area.origin_x + shift;
-    let baseline = area.origin_y + top + above;
-    for placed in line {
+    for (index, placed) in line.iter().enumerate() {
+        let baseline = baselines[index];
         let x = origin + placed.offset + placed.word.lead();
         match &placed.word.piece {
             Piece::Text {
@@ -584,21 +631,28 @@ fn finish_line(
             }
         }
     }
-    push_boxes(line, origin, baseline, fonts, lines);
-    push_rules(line, origin, baseline, fonts, lines);
+    push_boxes(line, origin, &baselines, fonts, lines);
+    push_rules(line, origin, &baselines, fonts, lines);
     above + below
 }
 
 struct Span {
     decoration: Decoration,
     last_word: usize,
+    baseline: f32,
     x0: f32,
     x1: f32,
     face: usize,
     font_size: f32,
 }
 
-fn push_rules(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
+fn push_rules(
+    line: &[PlacedWord],
+    origin: f32,
+    baselines: &[f32],
+    fonts: &Fonts,
+    lines: &mut Lines,
+) {
     let mut spans: Vec<Span> = Vec::new();
     for (index, placed) in line.iter().enumerate() {
         let Piece::Text { text, run, face } = &placed.word.piece else {
@@ -610,6 +664,7 @@ fn push_rules(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, li
             let joined = spans.iter_mut().find(|span| {
                 span.decoration == *decoration
                     && span.font_size == run.font_size
+                    && span.baseline == baselines[index]
                     && span.last_word + 1 == index
             });
             match joined {
@@ -620,6 +675,7 @@ fn push_rules(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, li
                 None => spans.push(Span {
                     decoration: *decoration,
                     last_word: index,
+                    baseline: baselines[index],
                     x0,
                     x1,
                     face: *face,
@@ -629,11 +685,12 @@ fn push_rules(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, li
         }
     }
     for span in &spans {
-        emit_rules(span, baseline, fonts, lines);
+        emit_rules(span, fonts, lines);
     }
 }
 
-fn emit_rules(span: &Span, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
+fn emit_rules(span: &Span, fonts: &Fonts, lines: &mut Lines) {
+    let baseline = span.baseline;
     let size = span.font_size;
     let decoration = &span.decoration;
     let thickness = decoration.thickness.unwrap_or(size / 16.0).round().max(1.0);
@@ -677,7 +734,13 @@ fn emit_rules(span: &Span, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
     }
 }
 
-fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, lines: &mut Lines) {
+fn push_boxes(
+    line: &[PlacedWord],
+    origin: f32,
+    baselines: &[f32],
+    fonts: &Fonts,
+    lines: &mut Lines,
+) {
     let mut styles: Vec<Rc<InlineBoxStyle>> = Vec::new();
     for placed in line {
         for style in &placed.word.stack {
@@ -714,6 +777,7 @@ fn push_boxes(line: &[PlacedWord], origin: f32, baseline: f32, fonts: &Fonts, li
             right -= style.margin_right;
         }
 
+        let baseline = baselines[first];
         let font_size = first_word.font_size();
         let ascent = fonts.ascent(first_word.face(), font_size);
         let descent = fonts.descent(first_word.face(), font_size);

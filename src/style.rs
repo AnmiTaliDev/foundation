@@ -24,6 +24,7 @@ pub const USER_AGENT_STYLESHEET: &str =
     b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } \
     i, em, cite, var, address { font-style: italic; } \
     code, kbd, samp, pre, tt { font-family: monospace; } \
+    sub { vertical-align: sub; font-size: 13px; } sup { vertical-align: super; font-size: 13px; } \
     u, ins, a { text-decoration: underline; } \
     s, del { text-decoration: line-through; } \
     pre { margin-top: 16px; margin-bottom: 16px; white-space: pre; } \
@@ -138,6 +139,16 @@ pub enum Clear {
     Left,
     Right,
     Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VerticalAlign {
+    Raise(f32),
+    Middle,
+    TextTop,
+    TextBottom,
+    Top,
+    Bottom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1016,6 +1027,28 @@ impl<'a> StyledNode<'a> {
             "space-around" => Some(Justify::SpaceAround),
             "space-evenly" => Some(Justify::SpaceEvenly),
             _ => None,
+        }
+    }
+
+    pub fn inline_vertical_align(&self) -> VerticalAlign {
+        let size = self.font_size();
+        match self.value("vertical-align") {
+            Some(Value::Keyword(keyword)) => match keyword.as_str() {
+                "sub" => VerticalAlign::Raise(-(size / 5.0 + 1.0)),
+                "super" => VerticalAlign::Raise(size / 3.0 + 1.0),
+                "middle" => VerticalAlign::Middle,
+                "text-top" => VerticalAlign::TextTop,
+                "text-bottom" => VerticalAlign::TextBottom,
+                "top" => VerticalAlign::Top,
+                "bottom" => VerticalAlign::Bottom,
+                _ => VerticalAlign::Raise(0.0),
+            },
+            Some(Value::Length(px)) => VerticalAlign::Raise(*px),
+            Some(Value::Em(em)) => VerticalAlign::Raise(em * size),
+            Some(Value::Percent(percent)) => {
+                VerticalAlign::Raise(percent / 100.0 * self.line_height().unwrap_or(size * 1.2))
+            }
+            _ => VerticalAlign::Raise(0.0),
         }
     }
 

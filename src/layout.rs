@@ -15,7 +15,8 @@ use crate::inline::{
 use crate::list;
 use crate::picture::Picture;
 use crate::style::{
-    Clear, Content, Display, FlexDirection, Position, StyledNode, TextAlign, Viewport,
+    Clear, Content, Display, FlexDirection, Position, StyledNode, TextAlign, VerticalAlign,
+    Viewport,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -152,6 +153,7 @@ struct Flow<'a> {
     items: Vec<InlineItem<'a>>,
     next_box_id: usize,
     counter: i32,
+    vertical: VerticalAlign,
 }
 
 fn list_start(style: &StyledNode) -> i32 {
@@ -174,6 +176,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         items: Vec::new(),
         next_box_id: 0,
         counter: list_start(style),
+        vertical: VerticalAlign::Raise(0.0),
     };
     let align = style.text_align();
     let blockify = matches!(style.display(), Display::Flex | Display::Grid);
@@ -269,6 +272,7 @@ fn collect_child<'a>(
         Display::InlineBlock => flow.items.push(InlineItem::Block(BlockRun {
             node,
             font_size: node.font_size(),
+            vertical: combine_vertical(flow.vertical, node.inline_vertical_align()),
         })),
         Display::Inline => match node.content {
             Content::Text(text) => flow.items.push(InlineItem::Text(Run {
@@ -282,6 +286,7 @@ fn collect_child<'a>(
                 italic: node.font_italic(),
                 white_space: node.white_space(),
                 decorations: node.decorations(),
+                vertical: flow.vertical,
             })),
             Content::Element(element) if element.tag_name == "img" => {
                 let picture = find_picture(element, images);
@@ -291,9 +296,12 @@ fn collect_child<'a>(
                     width,
                     height,
                     font_size: node.font_size(),
+                    vertical: combine_vertical(flow.vertical, node.inline_vertical_align()),
                 }));
             }
             Content::Element(_) => {
+                let outer_vertical = flow.vertical;
+                flow.vertical = combine_vertical(outer_vertical, node.inline_vertical_align());
                 let style = inline_box_style(node, flow.next_box_id);
                 flow.next_box_id += 1;
                 if let Some(style) = &style {
@@ -305,8 +313,19 @@ fn collect_child<'a>(
                 if let Some(style) = &style {
                     flow.items.push(InlineItem::Close(style.id));
                 }
+                flow.vertical = outer_vertical;
             }
         },
+    }
+}
+
+fn combine_vertical(outer: VerticalAlign, own: VerticalAlign) -> VerticalAlign {
+    match (outer, own) {
+        (VerticalAlign::Raise(outer), VerticalAlign::Raise(own)) => {
+            VerticalAlign::Raise(outer + own)
+        }
+        (outer, VerticalAlign::Raise(0.0)) => outer,
+        (_, own) => own,
     }
 }
 
