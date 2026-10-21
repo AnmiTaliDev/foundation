@@ -75,6 +75,7 @@ pub struct GradientTiles {
     pub tile: Rect,
     pub repeat_x: bool,
     pub repeat_y: bool,
+    pub fixed: bool,
     pub gradient: Rc<Gradient>,
     pub font_size: f32,
 }
@@ -85,6 +86,7 @@ pub struct Tiles {
     pub tile: Rect,
     pub repeat_x: bool,
     pub repeat_y: bool,
+    pub fixed: bool,
     pub picture: Rc<Picture>,
 }
 
@@ -419,6 +421,7 @@ pub fn paint(
 ) -> Canvas {
     let mut list = DisplayList::new();
     let view = View {
+        width: width as f32,
         scroll_y,
         height: height as f32,
     };
@@ -473,13 +476,17 @@ fn run(list: &[(DisplayCommand, bool)], canvas: &mut Canvas, scroll_y: f32, font
             DisplayCommand::Tiles(tiles) => {
                 let mut shifted = tiles.clone();
                 shifted.clip.y -= offset;
-                shifted.tile.y -= offset;
+                if !shifted.fixed {
+                    shifted.tile.y -= offset;
+                }
                 canvas.draw_tiles(&shifted);
             }
             DisplayCommand::GradientTiles(tiles) => {
                 let mut shifted = tiles.clone();
                 shifted.clip.y -= offset;
-                shifted.tile.y -= offset;
+                if !shifted.fixed {
+                    shifted.tile.y -= offset;
+                }
                 canvas.draw_gradient(&shifted);
             }
             DisplayCommand::BeginGroup(group) => {
@@ -587,6 +594,7 @@ fn canvas_background(root: &LayoutBox) -> Color {
 
 #[derive(Clone, Copy)]
 struct View {
+    width: f32,
     scroll_y: f32,
     height: f32,
 }
@@ -620,10 +628,10 @@ fn emit(list: &mut DisplayList, fixed: bool, commands: Vec<DisplayCommand>) {
     }
 }
 
-fn decoration_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
+fn decoration_commands(layout_box: &LayoutBox, view: View) -> Vec<DisplayCommand> {
     let mut commands = Vec::new();
     paint_shadows(layout_box, false, &mut commands);
-    paint_background(layout_box, &mut commands);
+    paint_background(layout_box, view, &mut commands);
     paint_shadows(layout_box, true, &mut commands);
     paint_borders(layout_box, &mut commands);
     commands
@@ -766,7 +774,7 @@ fn paint_flow(
             paint_stacking(child, fixed, container, view, list);
             continue;
         }
-        emit(list, fixed, decoration_commands(child));
+        emit(list, fixed, decoration_commands(child, view));
         let clip = clip_of(child);
         begin_clip(list, fixed, clip);
         emit(list, fixed, content_commands(child));
@@ -783,7 +791,7 @@ fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
     if item.creates_context {
         paint_stacking(item.layout_box, item.fixed, item.container, view, list);
     } else {
-        emit(list, item.fixed, decoration_commands(item.layout_box));
+        emit(list, item.fixed, decoration_commands(item.layout_box, view));
         let clip = clip_of(item.layout_box);
         begin_clip(list, item.fixed, clip);
         emit(list, item.fixed, content_commands(item.layout_box));
@@ -913,7 +921,7 @@ fn paint_stacking_contents(
     view: View,
     list: &mut DisplayList,
 ) {
-    emit(list, fixed, decoration_commands(layout_box));
+    emit(list, fixed, decoration_commands(layout_box, view));
     let clip = clip_of(layout_box);
     begin_clip(list, fixed, clip);
     let content = layout_box.dimensions.content;
@@ -1034,7 +1042,7 @@ fn box_radii(layout_box: &LayoutBox, style: &StyledNode) -> Radii {
     style.border_radii(border_box.width, border_box.height)
 }
 
-fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
+fn paint_background(layout_box: &LayoutBox, view: View, list: &mut Vec<DisplayCommand>) {
     let BoxKind::Block(style) = layout_box.kind else {
         return;
     };
@@ -1059,7 +1067,7 @@ fn paint_background(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
             continue;
         }
         with_clip(layout_box, style, index, list, |clip, list| {
-            push_layer(layout_box, style, index, clip, list);
+            push_layer(layout_box, style, index, clip, view, list);
         });
     }
 }
@@ -1100,7 +1108,15 @@ fn with_clip(
     list.push(DisplayCommand::EndGroup);
 }
 
-fn background_origin(layout_box: &LayoutBox, style: &StyledNode, index: usize) -> Rect {
+fn background_origin(layout_box: &LayoutBox, style: &StyledNode, index: usize, view: View) -> Rect {
+    if style.background_fixed(index) {
+        return Rect {
+            x: 0.0,
+            y: 0.0,
+            width: view.width,
+            height: view.height,
+        };
+    }
     match style.background_origin(index) {
         BackgroundBox::Border => layout_box.dimensions.border_box(),
         BackgroundBox::Padding => layout_box.dimensions.padding_box(),
@@ -1113,10 +1129,12 @@ fn push_layer(
     style: &StyledNode,
     index: usize,
     clip: Rect,
+    view: View,
     list: &mut Vec<DisplayCommand>,
 ) {
+    let fixed = style.background_fixed(index);
     if let Some(gradient) = style.background_gradient(index) {
-        let origin = background_origin(layout_box, style, index);
+        let origin = background_origin(layout_box, style, index, view);
         let area = (origin.width, origin.height);
         let (width, height) = style.background_size(index, area, area);
         let (repeat_x, repeat_y) = style.background_repeat(index);
@@ -1136,6 +1154,7 @@ fn push_layer(
             },
             repeat_x,
             repeat_y,
+            fixed,
             gradient: Rc::new(gradient.clone()),
             font_size: style.font_size(),
         }));
@@ -1143,7 +1162,7 @@ fn push_layer(
     let Some(Some(picture)) = layout_box.background_pictures.get(index) else {
         return;
     };
-    let origin = background_origin(layout_box, style, index);
+    let origin = background_origin(layout_box, style, index, view);
     let (width, height) = style.background_size(
         index,
         (origin.width, origin.height),
@@ -1164,6 +1183,7 @@ fn push_layer(
         },
         repeat_x,
         repeat_y,
+        fixed,
         picture: picture.clone(),
     }));
 }

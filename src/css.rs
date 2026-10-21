@@ -964,6 +964,17 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             })
             .unwrap_or_default();
     }
+    if name == "background-attachment" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword)) if is_attachment_keyword(&keyword) => {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
     if name == "background-clip" || name == "background-origin" {
         return match parse_value(value) {
             Some(Value::Keyword(keyword)) if is_box_keyword(&keyword) => {
@@ -1114,6 +1125,12 @@ fn expand_background(text: &str) -> Vec<Declaration> {
                     value: Value::Keyword(keyword),
                 })
             }
+            Some(Value::Keyword(keyword)) if is_attachment_keyword(&keyword) => {
+                declarations.push(Declaration {
+                    name: "background-attachment".to_string(),
+                    value: Value::Keyword(keyword),
+                })
+            }
             Some(_) if in_size => size.push(token),
             Some(_) => position.push(token),
             None => {}
@@ -1133,8 +1150,9 @@ fn expand_background(text: &str) -> Vec<Declaration> {
     declarations
 }
 
-const LAYERED: [&str; 6] = [
+const LAYERED: [&str; 7] = [
     "background-image",
+    "background-attachment",
     "background-repeat",
     "background-position",
     "background-size",
@@ -1155,6 +1173,7 @@ fn layer_default(name: &str) -> Value {
         "background-size" => keyword("explicit"),
         "background-size-width" | "background-size-height" => keyword("auto"),
         "background-origin" => keyword("padding-box"),
+        "background-attachment" => keyword("scroll"),
         _ => keyword("border-box"),
     }
 }
@@ -1184,6 +1203,10 @@ fn merge_layers(layers: Vec<Vec<Declaration>>) -> Vec<Declaration> {
             }
         })
         .collect()
+}
+
+fn is_attachment_keyword(keyword: &str) -> bool {
+    matches!(keyword, "scroll" | "fixed" | "local")
 }
 
 fn is_box_keyword(keyword: &str) -> bool {

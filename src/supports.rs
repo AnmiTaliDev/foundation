@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 123] = [
+const PROPERTIES: [&str; 124] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -16,6 +16,7 @@ const PROPERTIES: [&str; 123] = [
     "align-content",
     "align-items",
     "align-self",
+    "background-attachment",
     "background-clip",
     "background-color",
     "background-image",
