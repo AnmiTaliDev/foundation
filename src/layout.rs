@@ -1166,6 +1166,8 @@ impl<'a> LayoutBox<'a> {
         for image in &mut self.images {
             image.rect.x += dx;
             image.rect.y += dy;
+            image.drawn.x += dx;
+            image.drawn.y += dy;
         }
         for child in &mut self.children {
             child.translate(dx, dy);

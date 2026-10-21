@@ -170,3 +170,14 @@ fn parsing_drops_invalid_values() {
 fn supports_the_property() {
     assert!(foundation::supports::evaluate("(object-fit: cover)"));
 }
+
+#[test]
+fn drawn_rectangle_moves_with_the_box() {
+    let plain = bounds(&render("moved-plain", "object-fit: contain", "block"));
+    let moved = bounds(&render(
+        "moved-offset",
+        "object-fit: contain; position: relative; left: 7px; top: 3px",
+        "block",
+    ));
+    assert_eq!(moved, (plain.0 + 7, plain.1 + 3, plain.2 + 7, plain.3 + 3));
+}
