@@ -384,13 +384,21 @@ fn replaced_size(
         Some(picture) => (picture.width as f32, picture.height as f32),
         None => (0.0, 0.0),
     };
-    match (width, height) {
-        (Some(w), Some(h)) => (w, h),
-        (Some(w), None) if natural_width > 0.0 => (w, w * natural_height / natural_width),
-        (None, Some(h)) if natural_height > 0.0 => (h * natural_width / natural_height, h),
-        (Some(w), None) => (w, 0.0),
-        (None, Some(h)) => (0.0, h),
-        (None, None) => (natural_width, natural_height),
+    let natural_ratio =
+        (natural_width > 0.0 && natural_height > 0.0).then(|| natural_width / natural_height);
+    let ratio = match style.aspect_ratio() {
+        Some(given) if style.ratio_prefers_natural() => natural_ratio.or(Some(given)),
+        Some(given) => Some(given),
+        None => natural_ratio,
+    };
+    match (width, height, ratio) {
+        (Some(w), Some(h), _) => (w, h),
+        (Some(w), None, Some(ratio)) => (w, w / ratio),
+        (None, Some(h), Some(ratio)) => (h * ratio, h),
+        (Some(w), None, None) => (w, 0.0),
+        (None, Some(h), None) => (0.0, h),
+        (None, None, Some(ratio)) if natural_width > 0.0 => (natural_width, natural_width / ratio),
+        (None, None, _) => (natural_width, natural_height),
     }
 }
 

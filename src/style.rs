@@ -1559,8 +1559,16 @@ impl<'a> StyledNode<'a> {
     pub fn aspect_ratio(&self) -> Option<f32> {
         match self.value("aspect-ratio") {
             Some(Value::Number(ratio)) => Some(*ratio),
+            Some(Value::List(parts)) => match parts.as_slice() {
+                [_, Value::Number(ratio)] => Some(*ratio),
+                _ => None,
+            },
             _ => None,
         }
+    }
+
+    pub fn ratio_prefers_natural(&self) -> bool {
+        matches!(self.value("aspect-ratio"), Some(Value::List(_)))
     }
 
     pub fn is_border_box(&self) -> bool {

@@ -1932,6 +1932,7 @@ fn parse_ratio(text: &str) -> Option<Value> {
     if lower == "auto" {
         return Some(Value::Keyword(lower));
     }
+    let auto = lower.starts_with("auto");
     let ratio = lower.strip_prefix("auto").map_or(lower.as_str(), str::trim);
     let (first, second) = match ratio.split_once('/') {
         Some((first, second)) => (first.trim(), second.trim()),
@@ -1942,7 +1943,11 @@ fn parse_ratio(text: &str) -> Option<Value> {
     if first <= 0.0 || second <= 0.0 || !first.is_finite() || !second.is_finite() {
         return None;
     }
-    Some(Value::Number(first / second))
+    let ratio = Value::Number(first / second);
+    if auto {
+        return Some(Value::List(vec![Value::Keyword("auto".to_string()), ratio]));
+    }
+    Some(ratio)
 }
 
 fn is_line_style(keyword: &str) -> bool {
