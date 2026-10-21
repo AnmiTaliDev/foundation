@@ -137,3 +137,67 @@ fn nested_sticky_applies_its_own_offset_inside_the_parent() {
     assert_eq!(pixel(&page, 100.0, 5, 35), RED);
     assert_eq!(pixel(&page, 100.0, 5, 45), BLUE);
 }
+
+fn styled(body: &str) -> Page {
+    Page::new(&format!(
+        "<html><head><style>body {{ margin: 0 }} .s {{ position: sticky; top: 0; background-color: red }}</style></head><body>{}</body></html>",
+        body
+    ))
+}
+
+#[test]
+fn sticky_flex_item_sticks() {
+    let page = styled(
+        "<div style=\"display:flex;height:400px\"><div class=s style=\"width:20px;height:10px\"></div></div><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+}
+
+#[test]
+fn sticky_stretched_flex_item_stays_inside_its_container() {
+    let page = styled(
+        "<div style=\"display:flex;height:400px\"><div class=s style=\"width:20px\"></div></div><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+    assert_eq!(pixel(&page, 450.0, 5, 5), WHITE);
+}
+
+#[test]
+fn sticky_grid_item_sticks() {
+    let page = styled(
+        "<div style=\"display:grid;grid-template-columns:40px;height:400px\"><div class=s style=\"width:20px;height:10px\"></div></div><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+}
+
+#[test]
+fn sticky_table_cell_sticks() {
+    let page = styled(
+        "<table style=\"border-collapse:collapse\"><tr><td class=s style=\"width:20px;height:300px\"></td></tr></table><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+}
+
+#[test]
+fn sticky_table_row_sticks() {
+    let page = styled(
+        "<table style=\"border-collapse:collapse\"><tr class=s><td style=\"width:20px;height:10px\"></td></tr><tr><td style=\"height:300px\"></td></tr></table><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+}
+
+#[test]
+fn sticky_inline_block_sticks() {
+    let page = styled(
+        "<div class=s style=\"display:inline-block;width:20px;height:10px\"></div><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 5), RED);
+}
+
+#[test]
+fn sticky_keeps_transform_and_opacity() {
+    let page = styled(
+        "<div class=s style=\"width:20px;height:10px;opacity:0.5;transform:translateX(10px)\"></div><div style=\"height:800px\"></div>",
+    );
+    assert_eq!(pixel(&page, 100.0, 15, 5).g, 128);
+}
