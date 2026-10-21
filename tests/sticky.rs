@@ -112,3 +112,28 @@ fn sticky_is_painted_above_later_static_content() {
     assert_eq!(pixel(&page, 100.0, 5, 5), RED);
     assert_eq!(pixel(&page, 100.0, 5, 20), BLUE);
 }
+
+fn nested() -> Page {
+    page(
+        "<div class=\"s\" style=\"height:300px;background-color:blue\"><div style=\"height:20px\"></div><div class=\"s\"></div></div><div style=\"height:800px\"></div>",
+    )
+}
+
+#[test]
+fn nested_sticky_moves_with_its_sticky_parent() {
+    let page = nested();
+    assert_eq!(pixel(&page, 0.0, 5, 25), RED);
+    assert_eq!(pixel(&page, 100.0, 5, 25), RED);
+    assert_eq!(pixel(&page, 100.0, 5, 15), BLUE);
+    assert_eq!(pixel(&page, 100.0, 5, 35), BLUE);
+}
+
+#[test]
+fn nested_sticky_applies_its_own_offset_inside_the_parent() {
+    let page = Page::new(
+        "<html><head><style>body { margin: 0 } .o { position: sticky; top: 0; height: 300px; background-color: blue } .i { position: sticky; top: 30px; height: 10px; background-color: red }</style></head><body><div class=\"o\"><div style=\"height:10px\"></div><div class=\"i\"></div></div><div style=\"height:800px\"></div></body></html>",
+    );
+    assert_eq!(pixel(&page, 100.0, 5, 25), BLUE);
+    assert_eq!(pixel(&page, 100.0, 5, 35), RED);
+    assert_eq!(pixel(&page, 100.0, 5, 45), BLUE);
+}

@@ -906,6 +906,10 @@ fn paint_stacking(
     if let Some(group) = group {
         list.push((DisplayCommand::BeginGroup(group), fixed));
     }
+    let view = View {
+        scroll_y: view.scroll_y - shift,
+        ..view
+    };
     paint_stacking_contents(layout_box, fixed, view, list);
     if group.is_some() {
         list.push((DisplayCommand::EndGroup, fixed));
