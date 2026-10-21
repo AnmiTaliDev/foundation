@@ -17,8 +17,8 @@ use crate::list;
 use crate::picture::Picture;
 use crate::scroll::Scrollbars;
 use crate::style::{
-    Clear, Content, Display, FlexDirection, Indent, Position, StyledNode, TextAlign, VerticalAlign,
-    Viewport,
+    Clear, Content, ContentSize, Display, FlexDirection, Indent, Position, StyledNode, TextAlign,
+    VerticalAlign, Viewport,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -1022,13 +1022,15 @@ impl<'a> LayoutBox<'a> {
         images: &ImageMap,
     ) -> [Option<f32>; 3] {
         ["width", "max-width", "min-width"].map(|name| {
-            let keyword = style.content_size(name)?;
+            let size = style.content_size(name, container)?;
             let content = |mode| self.block_content_width(style, mode, fonts, images, container);
-            Some(match keyword {
-                "min-content" => content(Intrinsic::Min),
-                "max-content" => content(Intrinsic::Max),
-                _ => {
-                    let available = (container - horizontal_extras(style, container)).max(0.0);
+            Some(match size {
+                ContentSize::Min => content(Intrinsic::Min),
+                ContentSize::Max => content(Intrinsic::Max),
+                ContentSize::Fit(limit) => {
+                    let available = limit.unwrap_or_else(|| {
+                        (container - horizontal_extras(style, container)).max(0.0)
+                    });
                     content(Intrinsic::Max).min(available.max(content(Intrinsic::Min)))
                 }
             })

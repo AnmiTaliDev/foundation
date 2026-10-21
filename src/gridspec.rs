@@ -14,6 +14,14 @@ pub enum Size {
     Auto,
     MinContent,
     MaxContent,
+    FitContent(Limit),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Limit {
+    Px(f32),
+    Em(f32),
+    Percent(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,6 +112,21 @@ fn parse_track(term: &str) -> Option<Track> {
             return None;
         }
         return Some(Track { min, max });
+    }
+    if let Some(inner) = term
+        .strip_prefix("fit-content(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let limit = match parse_size(inner.trim())? {
+            Size::Px(px) => Limit::Px(px),
+            Size::Em(em) => Limit::Em(em),
+            Size::Percent(percent) => Limit::Percent(percent),
+            _ => return None,
+        };
+        return Some(Track {
+            min: Size::Auto,
+            max: Size::FitContent(limit),
+        });
     }
     let size = parse_size(term)?;
     Some(match size {

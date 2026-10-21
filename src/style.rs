@@ -237,6 +237,13 @@ fn stroke_style(keyword: Option<&str>) -> StrokeStyle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ContentSize {
+    Min,
+    Max,
+    Fit(Option<f32>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BackgroundBox {
     Border,
     Padding,
@@ -602,40 +609,45 @@ fn font_size_of(values: &PropertyMap) -> f32 {
 
 fn resolve_viewport_units(values: &mut PropertyMap, viewport: Viewport, root_font_size: f32) {
     for value in values.values_mut() {
-        let resolved = match value {
-            Value::Rem(rem) => Some(Value::Length(*rem * root_font_size)),
-            Value::Vw(vw) => Some(Value::Length(*vw * viewport.width / 100.0)),
-            Value::Vh(vh) => Some(Value::Length(*vh * viewport.height / 100.0)),
-            Value::Vmin(vmin) => Some(Value::Length(
-                *vmin * viewport.width.min(viewport.height) / 100.0,
-            )),
-            Value::Vmax(vmax) => Some(Value::Length(
-                *vmax * viewport.width.max(viewport.height) / 100.0,
-            )),
-            Value::Calc(linear) => {
-                let folded = linear.fold_viewport(root_font_size, viewport.width, viewport.height);
-                if folded.is_px_only() {
-                    Some(Value::Length(folded.px))
-                } else {
-                    Some(Value::Calc(folded))
-                }
-            }
-            Value::Math(math) => {
-                let folded = math.fold_viewport(root_font_size, viewport.width, viewport.height);
-                match folded
-                    .is_px_only()
-                    .then(|| folded.resolve(0.0, None))
-                    .flatten()
-                {
-                    Some(px) => Some(Value::Length(px)),
-                    None => Some(Value::Math(folded)),
-                }
-            }
-            _ => None,
-        };
-        if let Some(resolved) = resolved {
+        if let Some(resolved) = viewport_value(value, viewport, root_font_size) {
             *value = resolved;
         }
+    }
+}
+
+fn viewport_value(value: &Value, viewport: Viewport, root_font_size: f32) -> Option<Value> {
+    match value {
+        Value::Rem(rem) => Some(Value::Length(*rem * root_font_size)),
+        Value::Vw(vw) => Some(Value::Length(*vw * viewport.width / 100.0)),
+        Value::Vh(vh) => Some(Value::Length(*vh * viewport.height / 100.0)),
+        Value::Vmin(vmin) => Some(Value::Length(
+            *vmin * viewport.width.min(viewport.height) / 100.0,
+        )),
+        Value::Vmax(vmax) => Some(Value::Length(
+            *vmax * viewport.width.max(viewport.height) / 100.0,
+        )),
+        Value::Calc(linear) => {
+            let folded = linear.fold_viewport(root_font_size, viewport.width, viewport.height);
+            if folded.is_px_only() {
+                Some(Value::Length(folded.px))
+            } else {
+                Some(Value::Calc(folded))
+            }
+        }
+        Value::Math(math) => {
+            let folded = math.fold_viewport(root_font_size, viewport.width, viewport.height);
+            match folded
+                .is_px_only()
+                .then(|| folded.resolve(0.0, None))
+                .flatten()
+            {
+                Some(px) => Some(Value::Length(px)),
+                None => Some(Value::Math(folded)),
+            }
+        }
+        Value::FitContent(limit) => viewport_value(limit, viewport, root_font_size)
+            .map(|limit| Value::FitContent(Box::new(limit))),
+        _ => None,
     }
 }
 
@@ -1078,9 +1090,21 @@ impl<'a> StyledNode<'a> {
         }
     }
 
-    pub fn content_size(&self, name: &str) -> Option<&str> {
-        self.keyword(name)
-            .filter(|keyword| matches!(*keyword, "min-content" | "max-content" | "fit-content"))
+    pub fn content_size(&self, name: &str, percent_base: f32) -> Option<ContentSize> {
+        match self.value(name) {
+            Some(Value::Keyword(keyword)) => match keyword.as_str() {
+                "min-content" => Some(ContentSize::Min),
+                "max-content" => Some(ContentSize::Max),
+                "fit-content" => Some(ContentSize::Fit(None)),
+                _ => None,
+            },
+            Some(Value::FitContent(limit)) => Some(ContentSize::Fit(self.length_from(
+                Some(limit),
+                None,
+                Some(percent_base),
+            ))),
+            _ => None,
+        }
     }
 
     fn keyword(&self, name: &str) -> Option<&str> {

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::flex::distribute;
 use crate::float::FloatContext;
-use crate::gridspec::{Line, Size, Track, TrackList};
+use crate::gridspec::{Limit, Line, Size, Track, TrackList};
 use crate::layout::{
     block_replaced, BoxKind, Dimensions, EdgeSizes, ImageMap, Intrinsic, LayoutBox,
 };
@@ -386,7 +386,7 @@ fn size_tracks(
         }
         base[index] = resolve_size(track.min, base_space, font_size).unwrap_or(0.0);
         limit[index] = match track.max {
-            Size::Auto | Size::MaxContent | Size::Fr(_) => f32::INFINITY,
+            Size::Auto | Size::MaxContent | Size::Fr(_) | Size::FitContent(_) => f32::INFINITY,
             Size::MinContent => 0.0,
             fixed => resolve_size(fixed, base_space, font_size).unwrap_or(f32::INFINITY),
         };
@@ -396,8 +396,10 @@ fn size_tracks(
     }
     let intrinsic_min = |track: &Track| is_intrinsic_min(track.min, base_space);
     let intrinsic_max = |track: &Track| {
-        matches!(track.max, Size::Auto | Size::MaxContent | Size::Fr(_))
-            || (matches!(track.max, Size::Percent(_)) && base_space.is_none())
+        matches!(
+            track.max,
+            Size::Auto | Size::MaxContent | Size::Fr(_) | Size::FitContent(_)
+        ) || (matches!(track.max, Size::Percent(_)) && base_space.is_none())
     };
     for item in contributions.iter().filter(|item| item.span == 1) {
         let track = &tracks[item.start];
@@ -455,6 +457,16 @@ fn size_tracks(
     for index in 0..count {
         if limit[index].is_infinite() {
             limit[index] = base[index].max(item_limit[index]);
+        }
+        if let Size::FitContent(cap) = tracks[index].max {
+            let cap = match cap {
+                Limit::Px(px) => Some(px),
+                Limit::Em(em) => Some(em * font_size),
+                Limit::Percent(percent) => base_space.map(|space| percent / 100.0 * space),
+            };
+            if let Some(cap) = cap {
+                limit[index] = limit[index].min(cap.max(base[index]));
+            }
         }
     }
     let flex: Vec<f32> = tracks

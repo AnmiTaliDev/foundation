@@ -58,6 +58,7 @@ pub enum Value {
     Vmax(f32),
     Calc(Linear),
     Math(Math),
+    FitContent(Box<Value>),
     Color(Color),
     Url(String),
     Families(Vec<String>),
@@ -2025,6 +2026,22 @@ fn parse_value(text: &str) -> Option<Value> {
                 None => Value::Math(math),
             },
         });
+    }
+    if let Some(rest) = text.strip_prefix("fit-content(") {
+        let limit = parse_value(rest.strip_suffix(')')?.trim())?;
+        return match limit {
+            Value::Length(_)
+            | Value::Em(_)
+            | Value::Percent(_)
+            | Value::Rem(_)
+            | Value::Vw(_)
+            | Value::Vh(_)
+            | Value::Vmin(_)
+            | Value::Vmax(_)
+            | Value::Calc(_)
+            | Value::Math(_) => Some(Value::FitContent(Box::new(limit))),
+            _ => None,
+        };
     }
     if let Some(rest) = text.strip_prefix("url(") {
         let inner = rest.strip_suffix(')')?.trim();

@@ -256,7 +256,7 @@ fn read_item(
         let min_name = if axes.row { "min-width" } else { "min-height" };
         border_box = style.is_border_box();
         automatic_min = matches!(style.value(min_name), None | Some(Value::Keyword(_)))
-            && style.content_size(min_name).is_none()
+            && style.content_size(min_name, width).is_none()
             && !style.establishes_clip();
         item.grow = style.flex_grow();
         item.shrink = style.flex_shrink();
