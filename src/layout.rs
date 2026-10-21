@@ -463,6 +463,26 @@ pub(crate) fn horizontal_extras(style: &StyledNode, base: f32) -> f32 {
         + style.px("padding-right", base)
 }
 
+fn ratio_width(style: &StyledNode, container: f32) -> Option<f32> {
+    let ratio = style.aspect_ratio()?;
+    if style.display() == Display::TableCell {
+        return None;
+    }
+    let height = style.length_or_auto("height", None, None)?;
+    let vertical = style.px("padding-top", container)
+        + style.px("padding-bottom", container)
+        + style.px("border-top-width", container)
+        + style.px("border-bottom-width", container);
+    if !style.is_border_box() {
+        return Some(height * ratio);
+    }
+    let horizontal = style.px("padding-left", container)
+        + style.px("padding-right", container)
+        + style.px("border-left-width", container)
+        + style.px("border-right-width", container);
+    Some(((height + vertical) * ratio - horizontal).max(0.0))
+}
+
 fn combine_margins(a: f32, b: f32) -> f32 {
     if a >= 0.0 && b >= 0.0 {
         a.max(b)
@@ -650,7 +670,8 @@ impl<'a> LayoutBox<'a> {
             Some(replaced) => Some(replaced.width),
             None => style
                 .length_or_auto("width", None, Some(container))
-                .or(content_width),
+                .or(content_width)
+                .or_else(|| ratio_width(style, container)),
         };
         let margin_left = style.length_or_auto("margin-left", Some(0.0), Some(container));
         let margin_right = style.length_or_auto("margin-right", Some(0.0), Some(container));
@@ -801,7 +822,11 @@ impl<'a> LayoutBox<'a> {
 
         let specified_width = match &replaced {
             Some(replaced) => Some(replaced.width),
-            None => style.length_or_auto("width", None, Some(area.width)),
+            None => style
+                .length_or_auto("width", None, Some(area.width))
+                .or_else(|| {
+                    ratio_width(style, area.width).filter(|_| left.is_none() || right.is_none())
+                }),
         };
         let mut width = match (specified_width, left, right) {
             (Some(width), _, _) => width,
@@ -1169,7 +1194,9 @@ impl<'a> LayoutBox<'a> {
         let extras = horizontal_extras(style, container);
         let specified = match &replaced {
             Some(replaced) => Some(replaced.width),
-            None => style.length_or_auto("width", None, Some(container)),
+            None => style
+                .length_or_auto("width", None, Some(container))
+                .or_else(|| ratio_width(style, container)),
         };
         let mut width = match specified {
             Some(width) => width,

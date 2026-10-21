@@ -160,3 +160,79 @@ fn parsing_accepts_ratios_and_drops_invalid_values() {
 fn supports_the_property() {
     assert!(foundation::supports::evaluate("(aspect-ratio: 1 / 1)"));
 }
+
+#[test]
+fn width_follows_the_height() {
+    assert_eq!(block("height: 50px; aspect-ratio: 2"), (100.0, 50.0));
+    assert_eq!(block("height: 90px; aspect-ratio: 16 / 9"), (160.0, 90.0));
+}
+
+#[test]
+fn explicit_width_wins_over_the_height() {
+    assert_eq!(
+        block("width: 30px; height: 50px; aspect-ratio: 2"),
+        (30.0, 50.0)
+    );
+}
+
+#[test]
+fn width_from_height_without_a_ratio_fills_the_container() {
+    assert_eq!(block("height: 50px"), (400.0, 50.0));
+    assert_eq!(block("height: 50px; aspect-ratio: auto"), (400.0, 50.0));
+}
+
+#[test]
+fn width_from_height_adds_padding_and_border_to_the_content_box() {
+    assert_eq!(
+        block("height: 50px; padding: 10px; border: 2px solid red; aspect-ratio: 2"),
+        (124.0, 74.0)
+    );
+}
+
+#[test]
+fn border_box_width_from_height_covers_padding_and_border() {
+    assert_eq!(
+        block("box-sizing: border-box; height: 60px; padding: 10px; border: 2px solid red; aspect-ratio: 2"),
+        (60.0 * 2.0, 60.0)
+    );
+}
+
+#[test]
+fn width_from_height_respects_min_and_max_width() {
+    assert_eq!(
+        block("height: 50px; aspect-ratio: 4; max-width: 120px").0,
+        120.0
+    );
+    assert_eq!(
+        block("height: 50px; aspect-ratio: 1; min-width: 80px").0,
+        80.0
+    );
+}
+
+#[test]
+fn width_from_height_centers_with_auto_margins() {
+    let result = size(
+        "#a { height: 50px; aspect-ratio: 2; margin: 0 auto }",
+        "<div id=a></div>",
+        "a",
+    );
+    assert_eq!(result, (100.0, 50.0));
+}
+
+#[test]
+fn width_from_height_applies_to_floats_and_inline_blocks() {
+    for display in ["display: inline-block", "float: left", "position: absolute"] {
+        let result = block(&format!("{}; height: 40px; aspect-ratio: 2", display));
+        assert_eq!(result, (80.0, 40.0), "{}", display);
+    }
+}
+
+#[test]
+fn absolute_boxes_with_both_insets_stretch_instead() {
+    let result = size(
+        "#a { position: absolute; left: 10px; right: 10px; height: 40px; aspect-ratio: 2 }",
+        "<div id=a></div>",
+        "a",
+    );
+    assert_eq!(result, (380.0, 40.0));
+}
