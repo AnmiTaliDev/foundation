@@ -620,6 +620,17 @@ fn resolve_viewport_units(values: &mut PropertyMap, viewport: Viewport, root_fon
                     Some(Value::Calc(folded))
                 }
             }
+            Value::Math(math) => {
+                let folded = math.fold_viewport(root_font_size, viewport.width, viewport.height);
+                match folded
+                    .is_px_only()
+                    .then(|| folded.resolve(0.0, None))
+                    .flatten()
+                {
+                    Some(px) => Some(Value::Length(px)),
+                    None => Some(Value::Math(folded)),
+                }
+            }
             _ => None,
         };
         if let Some(resolved) = resolved {
@@ -635,6 +646,7 @@ fn resolve_font_size(values: &mut PropertyMap, parent: &PropertyMap) {
         Some(Value::Em(em)) => Some(em * parent_size),
         Some(Value::Percent(percent)) => Some(percent / 100.0 * parent_size),
         Some(Value::Calc(linear)) => linear.resolve(parent_size, Some(parent_size)),
+        Some(Value::Math(math)) => math.resolve(parent_size, Some(parent_size)),
         _ => None,
     };
     match resolved {
@@ -774,6 +786,7 @@ fn resolve_line_height(values: &mut PropertyMap) {
         Some(Value::Em(em)) => Some(em * font_size),
         Some(Value::Percent(percent)) => Some(percent / 100.0 * font_size),
         Some(Value::Calc(linear)) => linear.resolve(font_size, Some(font_size)),
+        Some(Value::Math(math)) => math.resolve(font_size, Some(font_size)),
         _ => None,
     };
     if let Some(px) = resolved {
@@ -1581,6 +1594,7 @@ impl<'a> StyledNode<'a> {
             Some(Value::Em(em)) => Some(em * self.font_size()),
             Some(Value::Percent(percent)) => percent_base.map(|base| percent / 100.0 * base),
             Some(Value::Calc(linear)) => linear.resolve(self.font_size(), percent_base),
+            Some(Value::Math(math)) => math.resolve(self.font_size(), percent_base),
             Some(Value::Keyword(keyword)) if keyword == "auto" => None,
             _ => default,
         }

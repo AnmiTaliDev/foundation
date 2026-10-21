@@ -10,10 +10,89 @@ pub struct Linear {
     pub vh: f32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum Math {
+    Linear(Linear),
+    Add(Box<Math>, Box<Math>),
+    Scale(Box<Math>, f32),
+    Min(Vec<Math>),
+    Max(Vec<Math>),
+    Clamp(Box<Math>, Box<Math>, Box<Math>),
+}
+
+impl Math {
+    pub fn is_px_only(&self) -> bool {
+        match self {
+            Math::Linear(linear) => linear.is_px_only(),
+            Math::Add(left, right) => left.is_px_only() && right.is_px_only(),
+            Math::Scale(inner, _) => inner.is_px_only(),
+            Math::Min(items) | Math::Max(items) => items.iter().all(Math::is_px_only),
+            Math::Clamp(low, value, high) => {
+                low.is_px_only() && value.is_px_only() && high.is_px_only()
+            }
+        }
+    }
+
+    pub fn fold_viewport(
+        &self,
+        root_font_size: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> Math {
+        let fold =
+            |math: &Math| math.fold_viewport(root_font_size, viewport_width, viewport_height);
+        match self {
+            Math::Linear(linear) => {
+                Math::Linear(linear.fold_viewport(root_font_size, viewport_width, viewport_height))
+            }
+            Math::Add(left, right) => Math::Add(Box::new(fold(left)), Box::new(fold(right))),
+            Math::Scale(inner, factor) => Math::Scale(Box::new(fold(inner)), *factor),
+            Math::Min(items) => Math::Min(items.iter().map(fold).collect()),
+            Math::Max(items) => Math::Max(items.iter().map(fold).collect()),
+            Math::Clamp(low, value, high) => Math::Clamp(
+                Box::new(fold(low)),
+                Box::new(fold(value)),
+                Box::new(fold(high)),
+            ),
+        }
+    }
+
+    pub fn resolve(&self, em_size: f32, percent_base: Option<f32>) -> Option<f32> {
+        let resolve = |math: &Math| math.resolve(em_size, percent_base);
+        match self {
+            Math::Linear(linear) => linear.resolve(em_size, percent_base),
+            Math::Add(left, right) => Some(resolve(left)? + resolve(right)?),
+            Math::Scale(inner, factor) => Some(resolve(inner)? * factor),
+            Math::Min(items) => items
+                .iter()
+                .map(resolve)
+                .try_fold(f32::INFINITY, |least, item| Some(least.min(item?))),
+            Math::Max(items) => items
+                .iter()
+                .map(resolve)
+                .try_fold(f32::NEG_INFINITY, |most, item| Some(most.max(item?))),
+            Math::Clamp(low, value, high) => {
+                Some(resolve(low)?.max(resolve(value)?.min(resolve(high)?)))
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 enum Operand {
     Scalar(f32),
     Length(Linear),
+    Math(Math),
+}
+
+impl Operand {
+    fn into_math(self) -> Option<Math> {
+        match self {
+            Operand::Scalar(_) => None,
+            Operand::Length(linear) => Some(Math::Linear(linear)),
+            Operand::Math(math) => Some(math),
+        }
+    }
 }
 
 impl Linear {
@@ -77,19 +156,19 @@ impl Linear {
     }
 }
 
-pub fn parse_calc(text: &str) -> Option<Linear> {
-    let inner = text.strip_prefix("calc(")?.strip_suffix(')')?;
+pub fn parse_math(text: &str) -> Option<Math> {
     let mut parser = Parser {
-        text: inner.as_bytes(),
+        text: text.as_bytes(),
         pos: 0,
     };
-    let result = parser.parse_sum()?;
+    let result = parser.parse_factor()?;
     parser.skip_whitespace();
     if parser.pos != parser.text.len() {
         return None;
     }
     match result {
-        Operand::Length(linear) if linear.is_finite() => Some(linear),
+        Operand::Length(linear) if linear.is_finite() => Some(Math::Linear(linear)),
+        Operand::Math(math) => Some(math),
         _ => None,
     }
 }
@@ -103,7 +182,10 @@ fn add(left: Operand, right: Operand, sign: f32) -> Option<Operand> {
     match (left, right) {
         (Operand::Scalar(a), Operand::Scalar(b)) => Some(Operand::Scalar(a + sign * b)),
         (Operand::Length(a), Operand::Length(b)) => Some(Operand::Length(a.plus(&b.scaled(sign)))),
-        _ => None,
+        (left, right) => Some(Operand::Math(Math::Add(
+            Box::new(left.into_math()?),
+            Box::new(Math::Scale(Box::new(right.into_math()?), sign)),
+        ))),
     }
 }
 
@@ -113,6 +195,10 @@ fn multiply(left: Operand, right: Operand) -> Option<Operand> {
         (Operand::Scalar(factor), Operand::Length(length))
         | (Operand::Length(length), Operand::Scalar(factor)) => {
             Some(Operand::Length(length.scaled(factor)))
+        }
+        (Operand::Scalar(factor), Operand::Math(math))
+        | (Operand::Math(math), Operand::Scalar(factor)) => {
+            Some(Operand::Math(Math::Scale(Box::new(math), factor)))
         }
         _ => None,
     }
@@ -128,6 +214,7 @@ fn divide(left: Operand, right: Operand) -> Option<Operand> {
     match left {
         Operand::Scalar(a) => Some(Operand::Scalar(a / divisor)),
         Operand::Length(length) => Some(Operand::Length(length.scaled(1.0 / divisor))),
+        Operand::Math(math) => Some(Operand::Math(Math::Scale(Box::new(math), 1.0 / divisor))),
     }
 }
 
@@ -177,10 +264,48 @@ impl Parser<'_> {
         }
     }
 
+    fn parse_arguments(&mut self) -> Option<Vec<Math>> {
+        let mut arguments = Vec::new();
+        loop {
+            arguments.push(self.parse_sum()?.into_math()?);
+            self.skip_whitespace();
+            match self.peek() {
+                Some(b',') => self.pos += 1,
+                Some(b')') => {
+                    self.pos += 1;
+                    return Some(arguments);
+                }
+                _ => return None,
+            }
+        }
+    }
+
     fn parse_factor(&mut self) -> Option<Operand> {
         self.skip_whitespace();
         if self.text[self.pos..].starts_with(b"calc(") {
             self.pos += 4;
+        }
+        for (name, build) in [
+            ("min(", Math::Min as fn(Vec<Math>) -> Math),
+            ("max(", Math::Max as fn(Vec<Math>) -> Math),
+        ] {
+            if self.text[self.pos..].starts_with(name.as_bytes()) {
+                self.pos += name.len();
+                return Some(Operand::Math(build(self.parse_arguments()?)));
+            }
+        }
+        if self.text[self.pos..].starts_with(b"clamp(") {
+            self.pos += 6;
+            let mut arguments = self.parse_arguments()?.into_iter();
+            let (low, value, high) = (arguments.next()?, arguments.next()?, arguments.next()?);
+            if arguments.next().is_some() {
+                return None;
+            }
+            return Some(Operand::Math(Math::Clamp(
+                Box::new(low),
+                Box::new(value),
+                Box::new(high),
+            )));
         }
         if self.peek() == Some(b'(') {
             self.pos += 1;

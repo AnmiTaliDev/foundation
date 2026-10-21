@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::calc::{self, Linear};
+use crate::calc::{self, Linear, Math};
 use crate::color::{self, Rgba};
 use crate::decoration::{self, Decoration};
 use crate::generated;
@@ -57,6 +57,7 @@ pub enum Value {
     Vmin(f32),
     Vmax(f32),
     Calc(Linear),
+    Math(Math),
     Color(Color),
     Url(String),
     Families(Vec<String>),
@@ -1339,7 +1340,8 @@ fn parse_font_size(text: &str) -> Option<Value> {
         | Value::Vh(_)
         | Value::Vmin(_)
         | Value::Vmax(_)
-        | Value::Calc(_)) => Some(size),
+        | Value::Calc(_)
+        | Value::Math(_)) => Some(size),
         _ => None,
     }
 }
@@ -1612,7 +1614,8 @@ fn expand_flex(text: &str) -> Vec<Declaration> {
                 | Value::Vh(_)
                 | Value::Vmin(_)
                 | Value::Vmax(_)
-                | Value::Calc(_)),
+                | Value::Calc(_)
+                | Value::Math(_)),
             ) => basis = value,
             Some(Value::Keyword(keyword)) if keyword == "auto" || keyword == "content" => {
                 basis = Value::Keyword(keyword)
@@ -1749,7 +1752,8 @@ fn radius_values(text: &str) -> Option<Vec<Value>> {
                 | Value::Vh(_)
                 | Value::Vmin(_)
                 | Value::Vmax(_)
-                | Value::Calc(_)),
+                | Value::Calc(_)
+                | Value::Math(_)),
             ) => values.push(value),
             _ => return None,
         }
@@ -1850,7 +1854,8 @@ fn expand_gap(text: &str) -> Vec<Declaration> {
                 | Value::Vh(_)
                 | Value::Vmin(_)
                 | Value::Vmax(_)
-                | Value::Calc(_)),
+                | Value::Calc(_)
+                | Value::Math(_)),
             ) => values.push(value),
             _ => return Vec::new(),
         }
@@ -2003,12 +2008,18 @@ fn expand_box_shorthand(longhands: &[&str; 4], text: &str) -> Vec<Declaration> {
 
 fn parse_value(text: &str) -> Option<Value> {
     let first = text.chars().next()?;
-    if text.starts_with("calc(") {
-        let linear = calc::parse_calc(text)?;
-        if linear.is_px_only() {
-            return Some(Value::Length(linear.px));
-        }
-        return Some(Value::Calc(linear));
+    if ["calc(", "min(", "max(", "clamp("]
+        .iter()
+        .any(|name| text.starts_with(name))
+    {
+        return Some(match calc::parse_math(text)? {
+            Math::Linear(linear) if linear.is_px_only() => Value::Length(linear.px),
+            Math::Linear(linear) => Value::Calc(linear),
+            math => match math.is_px_only().then(|| math.resolve(0.0, None)).flatten() {
+                Some(px) => Value::Length(px),
+                None => Value::Math(math),
+            },
+        });
     }
     if let Some(rest) = text.strip_prefix("url(") {
         let inner = rest.strip_suffix(')')?.trim();
