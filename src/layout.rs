@@ -527,7 +527,8 @@ impl<'a> LayoutBox<'a> {
                     self.forced_width =
                         Some(self.table_width(style, containing.content.width, fonts, images));
                 }
-                self.calculate_width(style, containing, replaced.as_ref());
+                let sizes = self.content_sizes(style, containing.content.width, fonts, images);
+                self.calculate_width(style, containing, replaced.as_ref(), sizes);
                 self.forced_width = given_width;
                 if table {
                     self.center_table(style, containing.content.width);
@@ -637,15 +638,19 @@ impl<'a> LayoutBox<'a> {
         style: &StyledNode,
         containing: &Dimensions,
         replaced: Option<&Replaced>,
+        sizes: [Option<f32>; 3],
     ) {
         let container = containing.content.width;
         if let Some(forced) = self.forced_width {
             self.calculate_forced_width(style, container, forced);
             return;
         }
+        let [content_width, content_max, content_min] = sizes;
         let width = match replaced {
             Some(replaced) => Some(replaced.width),
-            None => style.length_or_auto("width", None, Some(container)),
+            None => style
+                .length_or_auto("width", None, Some(container))
+                .or(content_width),
         };
         let margin_left = style.length_or_auto("margin-left", Some(0.0), Some(container));
         let margin_right = style.length_or_auto("margin-right", Some(0.0), Some(container));
@@ -658,13 +663,19 @@ impl<'a> LayoutBox<'a> {
 
         let (mut w, mut ml, mut mr) =
             resolve_horizontal(width, margin_left, margin_right, fixed, container);
-        if let Some(max) = style.length_or_auto("max-width", None, Some(container)) {
+        if let Some(max) = style
+            .length_or_auto("max-width", None, Some(container))
+            .or(content_max)
+        {
             if w > max {
                 (w, ml, mr) =
                     resolve_horizontal(Some(max), margin_left, margin_right, fixed, container);
             }
         }
-        if let Some(min) = style.length_or_auto("min-width", None, Some(container)) {
+        if let Some(min) = style
+            .length_or_auto("min-width", None, Some(container))
+            .or(content_min)
+        {
             if w < min {
                 (w, ml, mr) =
                     resolve_horizontal(Some(min), margin_left, margin_right, fixed, container);
@@ -956,6 +967,27 @@ impl<'a> LayoutBox<'a> {
         } else {
             style.px(name, base)
         }
+    }
+
+    fn content_sizes(
+        &self,
+        style: &StyledNode,
+        container: f32,
+        fonts: &Fonts,
+        images: &ImageMap,
+    ) -> [Option<f32>; 3] {
+        ["width", "max-width", "min-width"].map(|name| {
+            let keyword = style.content_size(name)?;
+            let content = |mode| self.block_content_width(style, mode, fonts, images, container);
+            Some(match keyword {
+                "min-content" => content(Intrinsic::Min),
+                "max-content" => content(Intrinsic::Max),
+                _ => {
+                    let available = (container - horizontal_extras(style, container)).max(0.0);
+                    content(Intrinsic::Max).min(available.max(content(Intrinsic::Min)))
+                }
+            })
+        })
     }
 
     fn calculate_forced_width(&mut self, style: &StyledNode, container: f32, width: f32) {

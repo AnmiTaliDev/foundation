@@ -1078,6 +1078,11 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn content_size(&self, name: &str) -> Option<&str> {
+        self.keyword(name)
+            .filter(|keyword| matches!(*keyword, "min-content" | "max-content" | "fit-content"))
+    }
+
     fn keyword(&self, name: &str) -> Option<&str> {
         match self.value(name) {
             Some(Value::Keyword(keyword)) => Some(keyword.as_str()),
