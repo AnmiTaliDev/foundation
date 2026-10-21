@@ -25,6 +25,7 @@ pub mod page;
 pub mod paint;
 pub mod picture;
 pub mod radius;
+pub mod scroll;
 pub mod selector;
 pub mod shadow;
 pub mod style;
