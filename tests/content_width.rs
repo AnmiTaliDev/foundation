@@ -91,3 +91,131 @@ fn supports_accepts_the_keywords() {
     assert!(foundation::supports::evaluate("(width: fit-content)"));
     assert!(foundation::supports::evaluate("(min-width: max-content)"));
 }
+
+fn render_in(outer: &str, inner: &str, container: u32) -> Canvas {
+    let html = format!(
+        "<html><head><style>body {{ margin: 0 }}</style></head><body><div style=\"width: {}px; {}\"><div style=\"background: red; {}\">{}</div></div></body></html>",
+        container, outer, inner, CHILDREN
+    );
+    Page::new(&html).render(200, 40, 0.0).canvas
+}
+
+#[test]
+fn floats_accept_content_keywords() {
+    assert_eq!(
+        filled(&render_in("", "float: left; width: min-content", 100)),
+        (0, 40)
+    );
+    assert_eq!(
+        filled(&render_in("", "float: left; width: max-content", 50)),
+        (0, 70)
+    );
+    assert_eq!(
+        filled(&render_in("", "float: left; width: fit-content", 50)),
+        (0, 50)
+    );
+}
+
+#[test]
+fn inline_blocks_accept_content_keywords() {
+    assert_eq!(
+        filled(&render_in(
+            "",
+            "display: inline-block; width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+}
+
+#[test]
+fn absolute_boxes_accept_content_keywords() {
+    assert_eq!(
+        filled(&render_in(
+            "position: relative",
+            "position: absolute; width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+    assert_eq!(
+        filled(&render_in(
+            "position: relative",
+            "position: absolute; width: 100%; max-width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+}
+
+#[test]
+fn flex_items_accept_content_keywords() {
+    assert_eq!(
+        filled(&render_in(
+            "display: flex",
+            "flex: none; width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+    assert_eq!(
+        filled(&render_in(
+            "display: flex",
+            "flex: none; width: max-content",
+            50
+        )),
+        (0, 70)
+    );
+    assert_eq!(
+        filled(&render_in(
+            "display: flex",
+            "flex: 1; max-width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+}
+
+#[test]
+fn flex_min_width_accepts_content_keywords() {
+    assert_eq!(
+        filled(&render_in(
+            "display: flex",
+            "flex: 0 1 10px; min-width: max-content",
+            100
+        )),
+        (0, 70)
+    );
+}
+
+#[test]
+fn column_flex_items_accept_content_keywords_across() {
+    assert_eq!(
+        filled(&render_in(
+            "display: flex; flex-direction: column; align-items: flex-start",
+            "width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+}
+
+#[test]
+fn grid_items_accept_content_keywords() {
+    assert_eq!(
+        filled(&render_in(
+            "display: grid; grid-template-columns: 100px",
+            "width: min-content",
+            100
+        )),
+        (0, 40)
+    );
+    assert_eq!(
+        filled(&render_in(
+            "display: grid; grid-template-columns: 100px",
+            "width: 100%; max-width: max-content",
+            100
+        )),
+        (0, 70)
+    );
+}

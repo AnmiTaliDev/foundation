@@ -218,10 +218,14 @@ fn read_item(
         item.cross_extras = cross_extras;
 
         let replaced = block_replaced(style, images, width);
+        let [content_width, content_max, content_min] =
+            child.content_sizes(style, width, fonts, images);
         let (specified_width, specified_height) = match &replaced {
             Some(replaced) => (Some(replaced.width), Some(replaced.height)),
             None => (
-                style.length_or_auto("width", None, Some(width)),
+                style
+                    .length_or_auto("width", None, Some(width))
+                    .or(content_width),
                 style.length_or_auto("height", None, container.height),
             ),
         };
@@ -229,8 +233,12 @@ fn read_item(
         if axes.row {
             specified_main = specified_width;
             specified_cross = specified_height;
-            item.min = limit("min-width", Some(width)).unwrap_or(0.0);
-            item.max = limit("max-width", Some(width)).unwrap_or(f32::INFINITY);
+            item.min = limit("min-width", Some(width))
+                .or(content_min)
+                .unwrap_or(0.0);
+            item.max = limit("max-width", Some(width))
+                .or(content_max)
+                .unwrap_or(f32::INFINITY);
             item.cross_min = limit("min-height", container.height).unwrap_or(0.0);
             item.cross_max = limit("max-height", container.height).unwrap_or(f32::INFINITY);
         } else {
@@ -238,12 +246,17 @@ fn read_item(
             specified_cross = specified_width;
             item.min = limit("min-height", container.height).unwrap_or(0.0);
             item.max = limit("max-height", container.height).unwrap_or(f32::INFINITY);
-            item.cross_min = limit("min-width", Some(width)).unwrap_or(0.0);
-            item.cross_max = limit("max-width", Some(width)).unwrap_or(f32::INFINITY);
+            item.cross_min = limit("min-width", Some(width))
+                .or(content_min)
+                .unwrap_or(0.0);
+            item.cross_max = limit("max-width", Some(width))
+                .or(content_max)
+                .unwrap_or(f32::INFINITY);
         }
         let min_name = if axes.row { "min-width" } else { "min-height" };
         border_box = style.is_border_box();
         automatic_min = matches!(style.value(min_name), None | Some(Value::Keyword(_)))
+            && style.content_size(min_name).is_none()
             && !style.establishes_clip();
         item.grow = style.flex_grow();
         item.shrink = style.flex_shrink();

@@ -1068,9 +1068,13 @@ fn item_content_width(
         + margins.left
         + margins.right;
     let replaced = block_replaced(style, images, area_width);
+    let [content_width, content_max, content_min] =
+        child.content_sizes(style, area_width, fonts, images);
     let specified = match &replaced {
         Some(replaced) => Some(replaced.width),
-        None => style.length_or_auto("width", None, Some(area_width)),
+        None => style
+            .length_or_auto("width", None, Some(area_width))
+            .or(content_width),
     };
     let auto_margin =
         is_auto_margin(Some(style), "margin-left") || is_auto_margin(Some(style), "margin-right");
@@ -1081,10 +1085,16 @@ fn item_content_width(
             .preferred_width(fonts, images, area_width)
             .min((area_width - extras).max(0.0)),
     };
-    if let Some(max) = style.length_or_auto("max-width", None, Some(area_width)) {
+    if let Some(max) = style
+        .length_or_auto("max-width", None, Some(area_width))
+        .or(content_max)
+    {
         width = width.min(max);
     }
-    if let Some(min) = style.length_or_auto("min-width", None, Some(area_width)) {
+    if let Some(min) = style
+        .length_or_auto("min-width", None, Some(area_width))
+        .or(content_min)
+    {
         width = width.max(min);
     }
     width
