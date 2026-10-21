@@ -4,7 +4,7 @@ use std::env;
 use std::process::ExitCode;
 
 use foundation::Page;
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseMode, Window, WindowOptions};
 
 const DEFAULT_WIDTH: usize = 800;
 const DEFAULT_HEIGHT: usize = 600;
@@ -29,9 +29,6 @@ fn main() -> ExitCode {
 fn scroll_delta(window: &Window, height: usize) -> f32 {
     let page = height as f32 - LINE_SCROLL;
     let mut delta = 0.0;
-    if let Some((_, wheel_y)) = window.get_scroll_wheel() {
-        delta -= wheel_y * WHEEL_SCROLL;
-    }
     if window.is_key_pressed(Key::Down, KeyRepeat::Yes) {
         delta += LINE_SCROLL;
     }
@@ -48,7 +45,7 @@ fn scroll_delta(window: &Window, height: usize) -> f32 {
 }
 
 fn run(path: &str) -> Result<(), String> {
-    let page = Page::open(path)?;
+    let mut page = Page::open(path)?;
     for warning in &page.warnings {
         eprintln!("foundation-window: warning: {}", warning);
     }
@@ -70,14 +67,25 @@ fn run(path: &str) -> Result<(), String> {
             window.update();
             continue;
         }
-        let mut target = scroll_y + scroll_delta(&window, height);
+        let mut wheel = 0.0;
+        let mut scrolled = false;
+        if let Some((wheel_x, wheel_y)) = window.get_scroll_wheel() {
+            let delta = (-wheel_x * WHEEL_SCROLL, -wheel_y * WHEEL_SCROLL);
+            wheel = delta.1;
+            if let Some(point) = window.get_mouse_pos(MouseMode::Discard) {
+                let remaining = page.scroll_by((width, height), scroll_y, point, delta);
+                scrolled = remaining != delta;
+                wheel = remaining.1;
+            }
+        }
+        let mut target = scroll_y + wheel + scroll_delta(&window, height);
         if window.is_key_pressed(Key::Home, KeyRepeat::No) {
             target = 0.0;
         }
         if window.is_key_pressed(Key::End, KeyRepeat::No) {
             target = content_height;
         }
-        if (width, height) != size || target != scroll_y {
+        if (width, height) != size || target != scroll_y || scrolled {
             let frame = page.render(width, height, target);
             size = (width, height);
             scroll_y = frame.scroll_y;
