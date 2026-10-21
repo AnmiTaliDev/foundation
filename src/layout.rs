@@ -15,6 +15,7 @@ use crate::inline::{
 };
 use crate::list;
 use crate::picture::Picture;
+use crate::scroll::Scrollbars;
 use crate::style::{
     Clear, Content, Display, FlexDirection, Indent, Position, StyledNode, TextAlign, VerticalAlign,
     Viewport,
@@ -68,6 +69,7 @@ pub struct LayoutBox<'a> {
     pub inline_boxes: Vec<InlineBoxFragment>,
     pub rules: Vec<RuleFragment>,
     pub background_pictures: Vec<Option<Rc<Picture>>>,
+    pub scrollbars: Option<Scrollbars>,
     pub(crate) marker: Option<String>,
     pub(crate) suppressed_borders: [bool; 4],
     pub(crate) forced_width: Option<f32>,
@@ -139,6 +141,7 @@ impl<'a> LayoutBox<'a> {
             inline_boxes: Vec::new(),
             rules: Vec::new(),
             background_pictures: Vec::new(),
+            scrollbars: None,
             marker: None,
             suppressed_borders: [false; 4],
             forced_width: None,

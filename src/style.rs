@@ -1224,6 +1224,13 @@ impl<'a> StyledNode<'a> {
         (scrolls("overflow-x"), scrolls("overflow-y"))
     }
 
+    pub fn scrollbars_always(&self) -> (bool, bool) {
+        (
+            self.keyword("overflow-x") == Some("scroll"),
+            self.keyword("overflow-y") == Some("scroll"),
+        )
+    }
+
     fn overflow_is(&self, keywords: &[&str]) -> bool {
         ["overflow-x", "overflow-y"].iter().any(|name| {
             matches!(

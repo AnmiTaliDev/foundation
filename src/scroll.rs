@@ -6,6 +6,13 @@ use crate::layout::{BoxKind, LayoutBox};
 use crate::style::{Content, Position};
 use crate::text::Fonts;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scrollbars {
+    pub offset: (f32, f32),
+    pub max: (f32, f32),
+    pub show: (bool, bool),
+}
+
 pub type Offsets = HashMap<usize, (f32, f32)>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +55,10 @@ impl LayoutBox<'_> {
 
     fn scroll_walk(&mut self, offsets: &Offsets, fonts: &Fonts, scrollers: &mut Vec<Scroller>) {
         let container = self.scroll_axes().map(|axes| {
+            let always = match self.kind {
+                BoxKind::Block(style) => style.scrollbars_always(),
+                BoxKind::Anonymous(_) => (false, false),
+            };
             let padding = self.dimensions.padding_box();
             let (width, height) = self.scroll_size(fonts);
             let max = (
@@ -66,6 +77,14 @@ impl LayoutBox<'_> {
             let wanted = offsets.get(&index).copied().unwrap_or((0.0, 0.0));
             let offset = (wanted.0.clamp(0.0, max.0), wanted.1.clamp(0.0, max.1));
             scrollers.push(Scroller { offset, max, axes });
+            self.scrollbars = Some(Scrollbars {
+                offset,
+                max,
+                show: (
+                    axes.0 && (always.0 || max.0 > 0.0),
+                    axes.1 && (always.1 || max.1 > 0.0),
+                ),
+            });
             offset
         });
         for child in &mut self.children {
