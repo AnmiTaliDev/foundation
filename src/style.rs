@@ -1219,6 +1219,11 @@ impl<'a> StyledNode<'a> {
         self.overflow_is(&["hidden", "clip", "auto", "scroll"])
     }
 
+    pub fn scroll_axes(&self) -> (bool, bool) {
+        let scrolls = |name: &str| matches!(self.keyword(name), Some("auto" | "scroll"));
+        (scrolls("overflow-x"), scrolls("overflow-y"))
+    }
+
     fn overflow_is(&self, keywords: &[&str]) -> bool {
         ["overflow-x", "overflow-y"].iter().any(|name| {
             matches!(

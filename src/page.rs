@@ -12,6 +12,7 @@ use crate::loader;
 use crate::location::Location;
 use crate::paint::{self, Canvas};
 use crate::picture;
+use crate::scroll::Offsets;
 use crate::style::{self, StyleSource};
 use crate::{html, text};
 
@@ -25,6 +26,7 @@ pub struct Page {
     stylesheet: Stylesheet,
     fonts: Fonts,
     images: ImageMap,
+    scrolls: Offsets,
     pub warnings: Vec<String>,
 }
 
@@ -43,6 +45,7 @@ impl Page {
             stylesheet,
             fonts: text::default_font(),
             images: ImageMap::new(),
+            scrolls: Offsets::new(),
             warnings: Vec::new(),
         }
     }
@@ -120,6 +123,7 @@ impl Page {
             document,
             fonts,
             images,
+            scrolls: Offsets::new(),
             warnings,
         }
     }
@@ -128,11 +132,12 @@ impl Page {
         let viewport = style::Viewport::new(width as f32, height as f32);
         match style::style_tree(&self.document, &self.stylesheet, viewport) {
             Some(styled_root) => {
-                let layout_root =
+                let mut layout_root =
                     layout::layout_tree(&styled_root, viewport, &self.fonts, &self.images);
                 let content_height = layout_root.dimensions.margin_box().height;
                 let max_scroll = (content_height - height as f32).max(0.0);
                 let scroll_y = scroll_y.clamp(0.0, max_scroll);
+                layout_root.apply_scrolls(&self.scrolls, &self.fonts);
                 Frame {
                     canvas: paint::paint(&layout_root, width, height, scroll_y, &self.fonts),
                     content_height,
@@ -145,6 +150,48 @@ impl Page {
                 scroll_y: 0.0,
             },
         }
+    }
+}
+
+impl Page {
+    pub fn scroll_by(
+        &mut self,
+        size: (usize, usize),
+        scroll_y: f32,
+        point: (f32, f32),
+        delta: (f32, f32),
+    ) -> (f32, f32) {
+        let viewport = style::Viewport::new(size.0 as f32, size.1 as f32);
+        let Some(styled_root) = style::style_tree(&self.document, &self.stylesheet, viewport)
+        else {
+            return delta;
+        };
+        let mut layout_root =
+            layout::layout_tree(&styled_root, viewport, &self.fonts, &self.images);
+        let scrollers = layout_root.apply_scrolls(&self.scrolls, &self.fonts);
+        let hits = layout_root.scrollers_at(point.0, point.1 + scroll_y);
+        let (mut remaining_x, mut remaining_y) = delta;
+        for index in hits.into_iter().rev() {
+            let scroller = scrollers[index];
+            let (x, y) = scroller.offset;
+            let next_x = if scroller.axes.0 {
+                (x + remaining_x).clamp(0.0, scroller.max.0)
+            } else {
+                x
+            };
+            let next_y = if scroller.axes.1 {
+                (y + remaining_y).clamp(0.0, scroller.max.1)
+            } else {
+                y
+            };
+            remaining_x -= next_x - x;
+            remaining_y -= next_y - y;
+            self.scrolls.insert(index, (next_x, next_y));
+            if remaining_x == 0.0 && remaining_y == 0.0 {
+                break;
+            }
+        }
+        (remaining_x, remaining_y)
     }
 }
 
