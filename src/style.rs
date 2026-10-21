@@ -1442,6 +1442,10 @@ impl<'a> StyledNode<'a> {
         self.layer_keyword("background-attachment", index) == Some("fixed")
     }
 
+    pub fn background_local(&self, index: usize) -> bool {
+        self.layer_keyword("background-attachment", index) == Some("local")
+    }
+
     pub fn background_clip(&self, index: usize) -> BackgroundBox {
         background_box(self.layer_keyword("background-clip", index))
     }

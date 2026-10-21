@@ -422,8 +422,9 @@ pub fn paint(
     let mut list = DisplayList::new();
     let view = View {
         width: width as f32,
-        scroll_y,
         height: height as f32,
+        top: scroll_y,
+        port_height: height as f32,
     };
     paint_stacking(root, false, Rect::default(), view, &mut list);
     let mut canvas = Canvas::filled(width, height, canvas_background(root));
@@ -595,8 +596,21 @@ fn canvas_background(root: &LayoutBox) -> Color {
 #[derive(Clone, Copy)]
 struct View {
     width: f32,
-    scroll_y: f32,
     height: f32,
+    top: f32,
+    port_height: f32,
+}
+
+fn scroll_view(layout_box: &LayoutBox, view: View) -> View {
+    if layout_box.scrollbars.is_none() {
+        return view;
+    }
+    let port = layout_box.dimensions.padding_box();
+    View {
+        top: port.y,
+        port_height: port.height,
+        ..view
+    }
 }
 
 struct Positioned<'a, 'b> {
@@ -606,6 +620,7 @@ struct Positioned<'a, 'b> {
     fixed: bool,
     layout_box: &'b LayoutBox<'a>,
     clips: Vec<Clip>,
+    view: View,
 }
 
 fn is_positioned(layout_box: &LayoutBox) -> bool {
@@ -698,11 +713,12 @@ fn collect_positioned<'a, 'b>(
     fixed: bool,
     container: Rect,
     clips: &[(Clip, bool)],
+    view: View,
     out: &mut Vec<Positioned<'a, 'b>>,
 ) {
     for child in children {
         let BoxKind::Block(style) = child.kind else {
-            collect_positioned(&child.children, fixed, container, clips, out);
+            collect_positioned(&child.children, fixed, container, clips, view, out);
             continue;
         };
         if !style.is_positioned() {
@@ -716,6 +732,7 @@ fn collect_positioned<'a, 'b>(
                     fixed,
                     child.dimensions.content,
                     &inner,
+                    scroll_view(child, view),
                     out,
                 );
             }
@@ -741,6 +758,7 @@ fn collect_positioned<'a, 'b>(
             fixed: child_fixed,
             layout_box: child,
             clips: applying,
+            view,
         });
         if !creates_context {
             let mut inner: Vec<(Clip, bool)> =
@@ -753,6 +771,7 @@ fn collect_positioned<'a, 'b>(
                 child_fixed,
                 child.dimensions.content,
                 &inner,
+                scroll_view(child, view),
                 out,
             );
         }
@@ -775,6 +794,7 @@ fn paint_flow(
             continue;
         }
         emit(list, fixed, decoration_commands(child, view));
+        let view = scroll_view(child, view);
         let clip = clip_of(child);
         begin_clip(list, fixed, clip);
         emit(list, fixed, content_commands(child));
@@ -785,7 +805,8 @@ fn paint_flow(
     }
 }
 
-fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
+fn paint_positioned(item: &Positioned, list: &mut DisplayList) {
+    let view = item.view;
     for clip in &item.clips {
         begin_clip(list, item.fixed, Some(*clip));
     }
@@ -793,6 +814,7 @@ fn paint_positioned(item: &Positioned, view: View, list: &mut DisplayList) {
         paint_stacking(item.layout_box, item.fixed, item.container, view, list);
     } else {
         emit(list, item.fixed, decoration_commands(item.layout_box, view));
+        let view = scroll_view(item.layout_box, view);
         let clip = clip_of(item.layout_box);
         begin_clip(list, item.fixed, clip);
         emit(list, item.fixed, content_commands(item.layout_box));
@@ -874,11 +896,11 @@ fn sticky_shift(layout_box: &LayoutBox, container: Rect, view: View) -> f32 {
     }
     let border = layout_box.dimensions.border_box();
     let margin = layout_box.dimensions.margin_box();
-    let top = style.length_or_auto("top", None, Some(view.height));
-    let bottom = style.length_or_auto("bottom", None, Some(view.height));
-    let from_top = top.map(|top| (view.scroll_y + top - border.y).max(0.0));
+    let top = style.length_or_auto("top", None, Some(view.port_height));
+    let bottom = style.length_or_auto("bottom", None, Some(view.port_height));
+    let from_top = top.map(|top| (view.top + top - border.y).max(0.0));
     let from_bottom = bottom
-        .map(|bottom| (view.scroll_y + view.height - bottom - (border.y + border.height)).min(0.0));
+        .map(|bottom| (view.top + view.port_height - bottom - (border.y + border.height)).min(0.0));
     let shift = match (from_top, from_bottom) {
         (Some(shift), _) if shift > 0.0 => shift,
         (_, Some(shift)) => shift,
@@ -909,7 +931,7 @@ fn paint_stacking(
         list.push((DisplayCommand::BeginGroup(group), fixed));
     }
     let view = View {
-        scroll_y: view.scroll_y - shift,
+        top: view.top - shift,
         ..view
     };
     paint_stacking_contents(layout_box, fixed, view, list);
@@ -928,19 +950,27 @@ fn paint_stacking_contents(
     list: &mut DisplayList,
 ) {
     emit(list, fixed, decoration_commands(layout_box, view));
+    let view = scroll_view(layout_box, view);
     let clip = clip_of(layout_box);
     begin_clip(list, fixed, clip);
     let content = layout_box.dimensions.content;
     let mut positioned = Vec::new();
-    collect_positioned(&layout_box.children, fixed, content, &[], &mut positioned);
+    collect_positioned(
+        &layout_box.children,
+        fixed,
+        content,
+        &[],
+        view,
+        &mut positioned,
+    );
     positioned.sort_by_key(|item| item.z_index);
     for item in positioned.iter().filter(|item| item.z_index < 0) {
-        paint_positioned(item, view, list);
+        paint_positioned(item, list);
     }
     emit(list, fixed, content_commands(layout_box));
     paint_flow(&layout_box.children, fixed, content, view, list);
     for item in positioned.iter().filter(|item| item.z_index >= 0) {
-        paint_positioned(item, view, list);
+        paint_positioned(item, list);
     }
     emit(list, fixed, scrollbar_commands(layout_box));
     end_clip(list, fixed, clip);
@@ -1204,10 +1234,19 @@ fn background_origin(layout_box: &LayoutBox, style: &StyledNode, index: usize, v
             height: view.height,
         };
     }
-    match style.background_origin(index) {
+    let origin = match style.background_origin(index) {
         BackgroundBox::Border => layout_box.dimensions.border_box(),
         BackgroundBox::Padding => layout_box.dimensions.padding_box(),
         BackgroundBox::Content => layout_box.dimensions.content,
+    };
+    match layout_box.scrollbars {
+        Some(bars) if style.background_local(index) => Rect {
+            x: origin.x - bars.offset.0,
+            y: origin.y - bars.offset.1,
+            width: origin.width + bars.max.0,
+            height: origin.height + bars.max.1,
+        },
+        _ => origin,
     }
 }
 
