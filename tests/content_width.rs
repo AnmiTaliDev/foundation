@@ -219,3 +219,31 @@ fn grid_items_accept_content_keywords() {
         (0, 70)
     );
 }
+
+fn height_of(style: &str) -> usize {
+    let html = format!(
+        "<html><head><style>body {{ margin: 0 }}</style></head><body><div style=\"width: 50px; background: red; {}\"><div style=\"height: 30px\"></div></div></body></html>",
+        style
+    );
+    let canvas = Page::new(&html).render(100, 100, 0.0).canvas;
+    (0..100).filter(|y| canvas.pixel(0, *y) == RED).count()
+}
+
+#[test]
+fn height_keywords_size_to_the_content() {
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        assert_eq!(
+            height_of(&format!("height: {}", keyword)),
+            30,
+            "{}",
+            keyword
+        );
+    }
+}
+
+#[test]
+fn height_limits_with_keywords_do_not_clamp() {
+    assert_eq!(height_of("max-height: max-content"), 30);
+    assert_eq!(height_of("min-height: min-content"), 30);
+    assert_eq!(height_of("height: 10px; min-height: min-content"), 10);
+}
