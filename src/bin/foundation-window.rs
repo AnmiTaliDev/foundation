@@ -94,7 +94,15 @@ fn run(path: &str) -> Result<(), String> {
             }
         }
         mouse_was_down = mouse_down;
-        let mut target = scroll_y + wheel + scroll_delta(&window, height);
+        let mut keys = scroll_delta(&window, height);
+        if keys != 0.0 {
+            if let Some(point) = window.get_mouse_pos(MouseMode::Discard) {
+                let remaining = page.scroll_by((width, height), scroll_y, point, (0.0, keys));
+                scrolled |= remaining.1 != keys;
+                keys = remaining.1;
+            }
+        }
+        let mut target = scroll_y + wheel + keys;
         if window.is_key_pressed(Key::Home, KeyRepeat::No) {
             target = 0.0;
         }
