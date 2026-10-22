@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod calc;
+pub mod collapse;
 pub mod color;
 mod composite;
 pub mod control;

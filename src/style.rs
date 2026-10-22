@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use crate::collapse::Edge;
 use crate::color::Rgba;
 use crate::control::control_text;
 use crate::counters::Counters;
@@ -1025,6 +1026,32 @@ impl<'a> StyledNode<'a> {
 
     pub fn border_style(&self, side: usize) -> StrokeStyle {
         stroke_style(self.keyword(BORDER_STYLES[side]))
+    }
+
+    pub fn border_edge(&self, side: usize) -> Edge {
+        let keyword = self.keyword(BORDER_STYLES[side]);
+        let rank = match keyword {
+            Some("double") => 8,
+            Some("solid") => 7,
+            Some("dashed") => 6,
+            Some("dotted") => 5,
+            Some("ridge") => 4,
+            Some("outset") => 3,
+            Some("groove") => 2,
+            Some("inset") => 1,
+            _ => 0,
+        };
+        Edge {
+            width: if rank > 0 {
+                self.px(BORDER_WIDTHS[side], 0.0)
+            } else {
+                0.0
+            },
+            rank,
+            hidden: keyword == Some("hidden"),
+            stroke: self.border_style(side),
+            color: self.border_color(side),
+        }
     }
 
     pub fn outline(&self) -> Option<Outline> {
