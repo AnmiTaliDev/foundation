@@ -1368,17 +1368,14 @@ fn paint_borders(layout_box: &LayoutBox, list: &mut Vec<DisplayCommand>) {
         .into_iter()
         .enumerate()
     {
-        let Some(Rgba { color, alpha }) = style.border_color(side) else {
+        let (stroke, paint) = match layout_box.collapsed_borders[side] {
+            Some(edge) => (edge.stroke, edge.color),
+            None => (style.border_style(side), style.border_color(side)),
+        };
+        let Some(Rgba { color, alpha }) = paint else {
             continue;
         };
-        push_edge(
-            list,
-            rect,
-            side % 2 == 0,
-            style.border_style(side),
-            color,
-            alpha,
-        );
+        push_edge(list, rect, side % 2 == 0, stroke, color, alpha);
     }
 }
 

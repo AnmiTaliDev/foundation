@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::collapse::Edge;
 use crate::css::Value;
 use crate::dom::ElementData;
 use crate::float::FloatContext;
@@ -30,10 +31,39 @@ struct Grid {
     columns: usize,
 }
 
+#[derive(Clone, Copy)]
+struct Plan {
+    suppressed: [bool; 4],
+    edges: [Option<Edge>; 4],
+}
+
+impl Plan {
+    const OPEN: Plan = Plan {
+        suppressed: [false; 4],
+        edges: [None; 4],
+    };
+
+    fn border(&self, style: &StyledNode, side: usize, base: f32) -> f32 {
+        if self.suppressed[side] {
+            return 0.0;
+        }
+        match self.edges[side] {
+            Some(edge) => edge.width,
+            None => style.px(BORDER_WIDTHS[side], base),
+        }
+    }
+}
+
+const BORDER_WIDTHS: [&str; 4] = [
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+];
+
 struct Spacing {
     x: f32,
     y: f32,
-    collapse: bool,
 }
 
 fn spacing(style: &StyledNode) -> Spacing {
@@ -49,7 +79,6 @@ fn spacing(style: &StyledNode) -> Spacing {
         } else {
             style.px("border-spacing-y", 0.0)
         },
-        collapse,
     }
 }
 
@@ -373,6 +402,53 @@ impl<'a> LayoutBox<'a> {
         fixed
     }
 
+    fn collapse_plan(&self, grid: &Grid, table: &StyledNode) -> Vec<Plan> {
+        if !table.border_collapse() {
+            return vec![Plan::OPEN; grid.cells.len()];
+        }
+        let table_borders = [
+            table.px("border-top-width", 0.0) > 0.0,
+            table.px("border-right-width", 0.0) > 0.0,
+            table.px("border-bottom-width", 0.0) > 0.0,
+            table.px("border-left-width", 0.0) > 0.0,
+        ];
+        let edge_of = |cell: &Cell, side: usize| match &self.cell_box(cell).kind {
+            BoxKind::Block(style) => style.border_edge(side),
+            BoxKind::Anonymous(_) => Edge::NONE,
+        };
+        grid.cells
+            .iter()
+            .map(|cell| {
+                let mut edges = [None; 4];
+                let right = grid.cells.iter().find(|other| {
+                    other.column == cell.column + cell.columns
+                        && other.row <= cell.row
+                        && cell.row < other.row + other.rows
+                });
+                if let Some(other) = right {
+                    edges[1] = Some(Edge::resolve(edge_of(cell, 1), edge_of(other, 3)));
+                }
+                let below = grid.cells.iter().find(|other| {
+                    other.row == cell.row + cell.rows
+                        && other.column <= cell.column
+                        && cell.column < other.column + other.columns
+                });
+                if let Some(other) = below {
+                    edges[2] = Some(Edge::resolve(edge_of(cell, 2), edge_of(other, 0)));
+                }
+                Plan {
+                    suppressed: [
+                        cell.row > 0 || table_borders[0],
+                        table_borders[1],
+                        table_borders[2],
+                        cell.column > 0 || table_borders[3],
+                    ],
+                    edges,
+                }
+            })
+            .collect()
+    }
+
     fn caption_width(&self, mode: Intrinsic, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         self.children
             .iter()
@@ -384,6 +460,7 @@ impl<'a> LayoutBox<'a> {
     fn column_limits(
         &self,
         grid: &Grid,
+        plans: &[Plan],
         gap: f32,
         fonts: &Fonts,
         images: &ImageMap,
@@ -392,15 +469,15 @@ impl<'a> LayoutBox<'a> {
         let mut minimum = vec![0.0f32; grid.columns];
         let mut maximum = vec![0.0f32; grid.columns];
         let mut measured = Vec::new();
-        for cell in &grid.cells {
+        for (cell, plan) in grid.cells.iter().zip(plans) {
             let cell_box = self.cell_box(cell);
             let BoxKind::Block(style) = &cell_box.kind else {
                 continue;
             };
             let extras = style.px("padding-left", base)
                 + style.px("padding-right", base)
-                + style.px("border-left-width", base)
-                + style.px("border-right-width", base);
+                + plan.border(style, 3, base)
+                + plan.border(style, 1, base);
             let low = cell_box.intrinsic_width(Intrinsic::Min, fonts, images, base) + extras;
             let high = cell_box
                 .intrinsic_width(Intrinsic::Max, fonts, images, base)
@@ -459,7 +536,8 @@ impl<'a> LayoutBox<'a> {
             return caption;
         }
         let gaps = spacing(style);
-        let (minimum, maximum) = self.column_limits(&grid, gaps.x, fonts, images, base);
+        let plans = self.collapse_plan(&grid, style);
+        let (minimum, maximum) = self.column_limits(&grid, &plans, gaps.x, fonts, images, base);
         let widths = match mode {
             Intrinsic::Min => minimum,
             Intrinsic::Max => maximum,
@@ -518,12 +596,14 @@ impl<'a> LayoutBox<'a> {
             self.dimensions.content.height = cursor;
             return;
         }
+        let plans = self.collapse_plan(&grid, style);
         let columns = grid.columns.max(1);
         let available = (width - gaps.x * (columns + 1) as f32).max(0.0);
         let widths = if style.table_layout_fixed() {
             self.fixed_widths(&grid, style, width, available, gaps.x)
         } else {
-            let (minimum, maximum) = self.column_limits(&grid, gaps.x, fonts, images, width);
+            let (minimum, maximum) =
+                self.column_limits(&grid, &plans, gaps.x, fonts, images, width);
             let percents = self.column_percents(&grid);
             let fixed = self.column_fixed(&grid, width);
             let has_free =
@@ -562,12 +642,6 @@ impl<'a> LayoutBox<'a> {
         }
         let rows_width = x - gaps.x - (left + gaps.x);
 
-        let table_borders = [
-            style.px("border-top-width", 0.0) > 0.0,
-            style.px("border-right-width", 0.0) > 0.0,
-            style.px("border-bottom-width", 0.0) > 0.0,
-            style.px("border-left-width", 0.0) > 0.0,
-        ];
         let row_count = grid.rows.len();
         let mut row_heights = vec![0.0f32; row_count];
         for (index, row) in grid.rows.iter().enumerate() {
@@ -578,37 +652,24 @@ impl<'a> LayoutBox<'a> {
 
         let mut natural = Vec::with_capacity(grid.cells.len());
         let mut minimum_heights = Vec::with_capacity(grid.cells.len());
-        for cell in &grid.cells {
+        for (cell, plan) in grid.cells.iter().zip(&plans) {
             let column_end = cell.column + cell.columns;
             let cell_width: f32 = widths[cell.column..column_end].iter().sum::<f32>()
                 + gaps.x * (cell.columns - 1) as f32;
             let cell_box = self.cell_box_mut(cell);
             cell_box.reset();
-            cell_box.suppressed_borders = [
-                gaps.collapse && (cell.row > 0 || table_borders[0]),
-                gaps.collapse && table_borders[1],
-                gaps.collapse && table_borders[2],
-                gaps.collapse && (cell.column > 0 || table_borders[3]),
-            ];
+            cell_box.collapsed_borders = plan.edges;
+            cell_box.suppressed_borders = plan.suppressed;
             let BoxKind::Block(cell_style) = &cell_box.kind else {
                 natural.push(0.0);
                 minimum_heights.push(0.0);
                 continue;
             };
             let cell_style = *cell_style;
-            let suppressed = cell_box.suppressed_borders;
             let extras = cell_style.px("padding-left", width)
                 + cell_style.px("padding-right", width)
-                + if suppressed[3] {
-                    0.0
-                } else {
-                    cell_style.px("border-left-width", width)
-                }
-                + if suppressed[1] {
-                    0.0
-                } else {
-                    cell_style.px("border-right-width", width)
-                };
+                + plan.border(cell_style, 3, width)
+                + plan.border(cell_style, 1, width);
             cell_box.forced_width = Some((cell_width - extras).max(0.0));
             let containing = Dimensions {
                 content: Rect {

@@ -6,6 +6,7 @@ use std::rc::Rc;
 use crate::text::Fonts;
 use crate::transform_text;
 
+use crate::collapse::Edge;
 use crate::css::Value;
 use crate::dom::ElementData;
 use crate::float::{FloatContext, Side};
@@ -72,6 +73,7 @@ pub struct LayoutBox<'a> {
     pub scrollbars: Option<Scrollbars>,
     pub(crate) marker: Option<String>,
     pub(crate) suppressed_borders: [bool; 4],
+    pub(crate) collapsed_borders: [Option<Edge>; 4],
     pub(crate) forced_width: Option<f32>,
     pub(crate) forced_height: Option<f32>,
     pub(crate) static_position: Option<(f32, f32)>,
@@ -144,6 +146,7 @@ impl<'a> LayoutBox<'a> {
             scrollbars: None,
             marker: None,
             suppressed_borders: [false; 4],
+            collapsed_borders: [None; 4],
             forced_width: None,
             forced_height: None,
             static_position: None,
@@ -1009,6 +1012,8 @@ impl<'a> LayoutBox<'a> {
     fn border_width(&self, style: &StyledNode, name: &str, side: usize, base: f32) -> f32 {
         if self.suppressed_borders[side] {
             0.0
+        } else if let Some(edge) = self.collapsed_borders[side] {
+            edge.width
         } else {
             style.px(name, base)
         }
@@ -1038,20 +1043,14 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn calculate_forced_width(&mut self, style: &StyledNode, container: f32, width: f32) {
+        let border_left = self.border_width(style, "border-left-width", 3, container);
+        let border_right = self.border_width(style, "border-right-width", 1, container);
         let d = &mut self.dimensions;
         d.content.width = width;
         d.padding.left = style.px("padding-left", container);
         d.padding.right = style.px("padding-right", container);
-        d.border.left = if self.suppressed_borders[3] {
-            0.0
-        } else {
-            style.px("border-left-width", container)
-        };
-        d.border.right = if self.suppressed_borders[1] {
-            0.0
-        } else {
-            style.px("border-right-width", container)
-        };
+        d.border.left = border_left;
+        d.border.right = border_right;
         d.margin.left = style.px("margin-left", container);
         d.margin.right = style.px("margin-right", container);
     }
