@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 125] = [
+const PROPERTIES: [&str; 128] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -129,6 +129,9 @@ const PROPERTIES: [&str; 125] = [
     "background",
     "font",
     "table-layout",
+    "scrollbar-width",
+    "scrollbar-thumb-color",
+    "scrollbar-track-color",
 ];
 
 const DISPLAYS: [&str; 10] = [

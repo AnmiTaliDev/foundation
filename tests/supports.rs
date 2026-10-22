@@ -84,3 +84,13 @@ fn other_at_rules_are_still_skipped() {
 fn table_layout_is_supported() {
     assert!(foundation::supports::evaluate("(table-layout: fixed)"));
 }
+
+#[test]
+fn scrollbar_properties_are_supported() {
+    assert!(foundation::supports::evaluate("(scrollbar-width: thin)"));
+    assert!(foundation::supports::evaluate(
+        "(scrollbar-color: red blue)"
+    ));
+    assert!(!foundation::supports::evaluate("(scrollbar-color: red)"));
+    assert!(!foundation::supports::evaluate("(scrollbar-width: wide)"));
+}
