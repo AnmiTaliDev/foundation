@@ -304,6 +304,64 @@ impl<'a> LayoutBox<'a> {
         percents
     }
 
+    fn fixed_widths(
+        &self,
+        grid: &Grid,
+        style: &StyledNode,
+        width: f32,
+        available: f32,
+        gap: f32,
+    ) -> Vec<f32> {
+        let mut widths: Vec<Option<f32>> = vec![None; grid.columns];
+        for (column, declared) in declared_columns(style, width)
+            .iter()
+            .enumerate()
+            .take(grid.columns)
+        {
+            widths[column] = match declared {
+                Some(Declared::Length(length)) => Some(*length),
+                Some(Declared::Percent(percent)) => Some(percent / 100.0 * width),
+                None => None,
+            };
+        }
+        for cell in grid.cells.iter().filter(|cell| cell.row == 0) {
+            let BoxKind::Block(cell_style) = &self.cell_box(cell).kind else {
+                continue;
+            };
+            let total = match cell_style.value("width") {
+                Some(Value::Percent(percent)) => Some(percent / 100.0 * width),
+                _ => cell_style
+                    .length_or_auto("width", None, Some(width))
+                    .map(|length| {
+                        length
+                            + cell_style.px("padding-left", width)
+                            + cell_style.px("padding-right", width)
+                            + cell_style.px("border-left-width", width)
+                            + cell_style.px("border-right-width", width)
+                    }),
+            };
+            let Some(total) = total else {
+                continue;
+            };
+            let share = ((total - gap * (cell.columns - 1) as f32) / cell.columns as f32).max(0.0);
+            for slot in &mut widths[cell.column..cell.column + cell.columns] {
+                slot.get_or_insert(share);
+            }
+        }
+        let assigned: f32 = widths.iter().flatten().sum();
+        let free = widths.iter().filter(|slot| slot.is_none()).count();
+        if free == 0 {
+            let scale = if assigned > 0.0 && available > assigned {
+                available / assigned
+            } else {
+                1.0
+            };
+            return widths.into_iter().flatten().map(|w| w * scale).collect();
+        }
+        let share = ((available - assigned) / free as f32).max(0.0);
+        widths.into_iter().map(|w| w.unwrap_or(share)).collect()
+    }
+
     fn column_fixed(&self, grid: &Grid, base: f32) -> Vec<bool> {
         let mut fixed = vec![false; grid.columns];
         if let BoxKind::Block(style) = &self.kind {
@@ -462,34 +520,40 @@ impl<'a> LayoutBox<'a> {
         }
         let columns = grid.columns.max(1);
         let available = (width - gaps.x * (columns + 1) as f32).max(0.0);
-        let (minimum, maximum) = self.column_limits(&grid, gaps.x, fonts, images, width);
-        let percents = self.column_percents(&grid);
-        let fixed = self.column_fixed(&grid, width);
-        let has_free = (0..grid.columns).any(|index| percents[index].is_none() && !fixed[index]);
-        let mut widths = vec![0.0f32; grid.columns];
-        let mut remaining = available;
-        let mut flexible = Vec::new();
-        for (index, percent) in percents.iter().enumerate() {
-            match percent {
-                Some(percent) => {
-                    widths[index] = (percent / 100.0 * width).max(minimum[index]);
-                    remaining -= widths[index];
+        let widths = if style.table_layout_fixed() {
+            self.fixed_widths(&grid, style, width, available, gaps.x)
+        } else {
+            let (minimum, maximum) = self.column_limits(&grid, gaps.x, fonts, images, width);
+            let percents = self.column_percents(&grid);
+            let fixed = self.column_fixed(&grid, width);
+            let has_free =
+                (0..grid.columns).any(|index| percents[index].is_none() && !fixed[index]);
+            let mut widths = vec![0.0f32; grid.columns];
+            let mut remaining = available;
+            let mut flexible = Vec::new();
+            for (index, percent) in percents.iter().enumerate() {
+                match percent {
+                    Some(percent) => {
+                        widths[index] = (percent / 100.0 * width).max(minimum[index]);
+                        remaining -= widths[index];
+                    }
+                    None if fixed[index] && has_free => {
+                        widths[index] = minimum[index];
+                        remaining -= widths[index];
+                    }
+                    None => flexible.push(index),
                 }
-                None if fixed[index] && has_free => {
-                    widths[index] = minimum[index];
-                    remaining -= widths[index];
+            }
+            if !flexible.is_empty() {
+                let low: Vec<f32> = flexible.iter().map(|index| minimum[*index]).collect();
+                let high: Vec<f32> = flexible.iter().map(|index| maximum[*index]).collect();
+                let shared = distribute(&low, &high, remaining.max(0.0));
+                for (index, share) in flexible.iter().zip(shared) {
+                    widths[*index] = share;
                 }
-                None => flexible.push(index),
             }
-        }
-        if !flexible.is_empty() {
-            let low: Vec<f32> = flexible.iter().map(|index| minimum[*index]).collect();
-            let high: Vec<f32> = flexible.iter().map(|index| maximum[*index]).collect();
-            let shared = distribute(&low, &high, remaining.max(0.0));
-            for (index, share) in flexible.iter().zip(shared) {
-                widths[*index] = share;
-            }
-        }
+            widths
+        };
         let mut column_x = Vec::with_capacity(widths.len());
         let mut x = left + gaps.x;
         for column_width in &widths {

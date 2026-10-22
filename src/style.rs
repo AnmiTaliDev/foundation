@@ -1433,6 +1433,11 @@ impl<'a> StyledNode<'a> {
         self.keyword("border-collapse") == Some("collapse")
     }
 
+    pub fn table_layout_fixed(&self) -> bool {
+        self.keyword("table-layout") == Some("fixed")
+            && !matches!(self.value("width"), None | Some(Value::Keyword(_)))
+    }
+
     pub fn list_style_type(&self) -> &str {
         self.keyword("list-style-type").unwrap_or("disc")
     }
