@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::layout::{BoxKind, LayoutBox};
+use crate::layout::{BoxKind, LayoutBox, Rect};
 use crate::style::{Content, Position};
 use crate::text::Fonts;
 
@@ -11,6 +11,76 @@ pub struct Scrollbars {
     pub offset: (f32, f32),
     pub max: (f32, f32),
     pub show: (bool, bool),
+}
+
+const SCROLLBAR_WIDTH: f32 = 8.0;
+const SCROLLBAR_MIN_THUMB: f32 = 10.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bar {
+    pub track: Rect,
+    pub thumb: Rect,
+    pub vertical: bool,
+}
+
+impl Scrollbars {
+    pub fn bars(&self, area: Rect) -> Vec<Bar> {
+        let corner = if self.show.0 && self.show.1 {
+            SCROLLBAR_WIDTH
+        } else {
+            0.0
+        };
+        let mut bars = Vec::new();
+        if self.show.1 {
+            let track = Rect {
+                x: area.x + area.width - SCROLLBAR_WIDTH,
+                y: area.y,
+                width: SCROLLBAR_WIDTH,
+                height: (area.height - corner).max(0.0),
+            };
+            bars.push(bar(track, true, area.height, self.offset.1, self.max.1));
+        }
+        if self.show.0 {
+            let track = Rect {
+                x: area.x,
+                y: area.y + area.height - SCROLLBAR_WIDTH,
+                width: (area.width - corner).max(0.0),
+                height: SCROLLBAR_WIDTH,
+            };
+            bars.push(bar(track, false, area.width, self.offset.0, self.max.0));
+        }
+        bars
+    }
+}
+
+fn bar(track: Rect, vertical: bool, view: f32, offset: f32, max: f32) -> Bar {
+    let length = if vertical { track.height } else { track.width };
+    let size = (length * view / (view + max))
+        .max(SCROLLBAR_MIN_THUMB)
+        .min(length);
+    let travel = if max > 0.0 {
+        offset / max * (length - size)
+    } else {
+        0.0
+    };
+    let thumb = if vertical {
+        Rect {
+            y: track.y + travel,
+            height: size,
+            ..track
+        }
+    } else {
+        Rect {
+            x: track.x + travel,
+            width: size,
+            ..track
+        }
+    };
+    Bar {
+        track,
+        thumb,
+        vertical,
+    }
 }
 
 pub type Offsets = HashMap<usize, (f32, f32)>;

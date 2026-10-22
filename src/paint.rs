@@ -977,8 +977,6 @@ fn paint_stacking_contents(
     emit(list, fixed, outline_commands(layout_box));
 }
 
-const SCROLLBAR_WIDTH: f32 = 8.0;
-const SCROLLBAR_MIN_THUMB: f32 = 10.0;
 const SCROLLBAR_TRACK: Color = Color {
     r: 241,
     g: 241,
@@ -995,64 +993,14 @@ fn scrollbar_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let Some(bars) = layout_box.scrollbars else {
         return list;
     };
-    let area = layout_box.dimensions.padding_box();
-    let corner = if bars.show.0 && bars.show.1 {
-        SCROLLBAR_WIDTH
-    } else {
-        0.0
-    };
-    let mut bar = |track: Rect, vertical: bool, offset: f32, max: f32| {
-        let (length, view) = if vertical {
-            (track.height, area.height)
-        } else {
-            (track.width, area.width)
-        };
-        let thumb = (length * view / (view + max))
-            .max(SCROLLBAR_MIN_THUMB)
-            .min(length);
-        let travel = if max > 0.0 {
-            offset / max * (length - thumb)
-        } else {
-            0.0
-        };
-        let thumb_rect = if vertical {
-            Rect {
-                y: track.y + travel,
-                height: thumb,
-                ..track
-            }
-        } else {
-            Rect {
-                x: track.x + travel,
-                width: thumb,
-                ..track
-            }
-        };
-        for (color, rect) in [(SCROLLBAR_TRACK, track), (SCROLLBAR_THUMB, thumb_rect)] {
+    for bar in bars.bars(layout_box.dimensions.padding_box()) {
+        for (color, rect) in [(SCROLLBAR_TRACK, bar.track), (SCROLLBAR_THUMB, bar.thumb)] {
             list.push(DisplayCommand::Rect(SolidRect {
                 color,
                 alpha: 255,
                 rect,
             }));
         }
-    };
-    if bars.show.1 {
-        let track = Rect {
-            x: area.x + area.width - SCROLLBAR_WIDTH,
-            y: area.y,
-            width: SCROLLBAR_WIDTH,
-            height: (area.height - corner).max(0.0),
-        };
-        bar(track, true, bars.offset.1, bars.max.1);
-    }
-    if bars.show.0 {
-        let track = Rect {
-            x: area.x,
-            y: area.y + area.height - SCROLLBAR_WIDTH,
-            width: (area.width - corner).max(0.0),
-            height: SCROLLBAR_WIDTH,
-        };
-        bar(track, false, bars.offset.0, bars.max.0);
     }
     list
 }
