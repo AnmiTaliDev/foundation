@@ -83,6 +83,58 @@ fn bar(track: Rect, vertical: bool, view: f32, offset: f32, max: f32) -> Bar {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grab {
+    pub index: usize,
+    pub vertical: bool,
+    anchor: f32,
+}
+
+impl Scrollbars {
+    pub fn grab(&self, area: Rect, index: usize, x: f32, y: f32) -> Option<Grab> {
+        self.bars(area).into_iter().find_map(|bar| {
+            let thumb = bar.thumb;
+            let inside = x >= thumb.x
+                && x < thumb.x + thumb.width
+                && y >= thumb.y
+                && y < thumb.y + thumb.height;
+            inside.then_some(Grab {
+                index,
+                vertical: bar.vertical,
+                anchor: if bar.vertical {
+                    y - thumb.y
+                } else {
+                    x - thumb.x
+                },
+            })
+        })
+    }
+
+    pub fn dragged_offset(&self, area: Rect, grab: Grab, x: f32, y: f32) -> Option<f32> {
+        let bar = self
+            .bars(area)
+            .into_iter()
+            .find(|bar| bar.vertical == grab.vertical)?;
+        let (track_start, track_length, thumb_length, pointer, max) = if grab.vertical {
+            (
+                bar.track.y,
+                bar.track.height,
+                bar.thumb.height,
+                y,
+                self.max.1,
+            )
+        } else {
+            (bar.track.x, bar.track.width, bar.thumb.width, x, self.max.0)
+        };
+        let space = track_length - thumb_length;
+        if space <= 0.0 {
+            return Some(0.0);
+        }
+        let travel = (pointer - grab.anchor - track_start).clamp(0.0, space);
+        Some(travel / space * max)
+    }
+}
+
 pub type Offsets = HashMap<usize, (f32, f32)>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -171,6 +223,23 @@ impl LayoutBox<'_> {
         let content = self.dimensions.content;
         self.translate(dx, dy);
         self.dimensions.content = content;
+    }
+
+    pub fn scroller_bars(&self) -> Vec<(Rect, Scrollbars)> {
+        let mut found = Vec::new();
+        self.bars_walk(&mut found);
+        found
+    }
+
+    fn bars_walk(&self, found: &mut Vec<(Rect, Scrollbars)>) {
+        if self.scroll_axes().is_some() {
+            if let Some(bars) = self.scrollbars {
+                found.push((self.dimensions.padding_box(), bars));
+            }
+        }
+        for child in &self.children {
+            child.bars_walk(found);
+        }
     }
 
     pub fn scrollers_at(&self, x: f32, y: f32) -> Vec<usize> {

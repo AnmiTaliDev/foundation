@@ -7,12 +7,12 @@ use crate::text::Fonts;
 
 use crate::css::{self, FontFace, Rule, Stylesheet};
 use crate::dom::{Node, NodeType};
-use crate::layout::{self, ImageMap};
+use crate::layout::{self, ImageMap, LayoutBox};
 use crate::loader;
 use crate::location::Location;
 use crate::paint::{self, Canvas};
 use crate::picture;
-use crate::scroll::Offsets;
+use crate::scroll::{Grab, Offsets, Scroller};
 use crate::style::{self, StyleSource};
 use crate::{html, text};
 
@@ -154,6 +154,62 @@ impl Page {
 }
 
 impl Page {
+    fn scrolled_layout<R>(
+        &self,
+        size: (usize, usize),
+        f: impl FnOnce(&LayoutBox, Vec<Scroller>) -> R,
+    ) -> Option<R> {
+        let viewport = style::Viewport::new(size.0 as f32, size.1 as f32);
+        let styled_root = style::style_tree(&self.document, &self.stylesheet, viewport)?;
+        let mut layout_root =
+            layout::layout_tree(&styled_root, viewport, &self.fonts, &self.images);
+        let scrollers = layout_root.apply_scrolls(&self.scrolls, &self.fonts);
+        Some(f(&layout_root, scrollers))
+    }
+
+    pub fn scroll_grab(
+        &self,
+        size: (usize, usize),
+        scroll_y: f32,
+        point: (f32, f32),
+    ) -> Option<Grab> {
+        let y = point.1 + scroll_y;
+        self.scrolled_layout(size, |root, _| {
+            let bars = root.scroller_bars();
+            root.scrollers_at(point.0, y)
+                .into_iter()
+                .rev()
+                .find_map(|index| {
+                    let (area, scrollbars) = bars.get(index)?;
+                    scrollbars.grab(*area, index, point.0, y)
+                })
+        })
+        .flatten()
+    }
+
+    pub fn scroll_drag(
+        &mut self,
+        size: (usize, usize),
+        scroll_y: f32,
+        grab: Grab,
+        point: (f32, f32),
+    ) {
+        let y = point.1 + scroll_y;
+        let moved = self.scrolled_layout(size, |root, scrollers| {
+            let (area, scrollbars) = *root.scroller_bars().get(grab.index)?;
+            let offset = scrollbars.dragged_offset(area, grab, point.0, y)?;
+            let current = scrollers.get(grab.index)?.offset;
+            Some(if grab.vertical {
+                (current.0, offset)
+            } else {
+                (offset, current.1)
+            })
+        });
+        if let Some(Some(offset)) = moved {
+            self.scrolls.insert(grab.index, offset);
+        }
+    }
+
     pub fn scroll_by(
         &mut self,
         size: (usize, usize),
@@ -161,15 +217,12 @@ impl Page {
         point: (f32, f32),
         delta: (f32, f32),
     ) -> (f32, f32) {
-        let viewport = style::Viewport::new(size.0 as f32, size.1 as f32);
-        let Some(styled_root) = style::style_tree(&self.document, &self.stylesheet, viewport)
-        else {
+        let hits = self.scrolled_layout(size, |root, scrollers| {
+            (root.scrollers_at(point.0, point.1 + scroll_y), scrollers)
+        });
+        let Some((hits, scrollers)) = hits else {
             return delta;
         };
-        let mut layout_root =
-            layout::layout_tree(&styled_root, viewport, &self.fonts, &self.images);
-        let scrollers = layout_root.apply_scrolls(&self.scrolls, &self.fonts);
-        let hits = layout_root.scrollers_at(point.0, point.1 + scroll_y);
         let (mut remaining_x, mut remaining_y) = delta;
         for index in hits.into_iter().rev() {
             let scroller = scrollers[index];
