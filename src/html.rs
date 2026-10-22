@@ -262,6 +262,12 @@ impl<'a> Parser<'a> {
             "optgroup" => self.close_through(&["option", "optgroup"], &["select"]),
             _ => {}
         }
+        if matches!(
+            name,
+            "caption" | "colgroup" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th"
+        ) {
+            self.close_through(&["caption", "colgroup"], &["table"]);
+        }
         if PARAGRAPH_CLOSERS.contains(&name) {
             self.close_through(&["p"], &["table", "td", "th", "button"]);
         }
