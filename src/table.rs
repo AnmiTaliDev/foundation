@@ -63,6 +63,59 @@ fn span_attribute(element: &ElementData, name: &str) -> usize {
         .min(MAX_SPAN)
 }
 
+enum Declared {
+    Length(f32),
+    Percent(f32),
+}
+
+fn declared_width(node: &StyledNode, fallback: Option<&StyledNode>, base: f32) -> Option<Declared> {
+    for style in [Some(node), fallback].into_iter().flatten() {
+        if let Some(Value::Percent(percent)) = style.value("width") {
+            return Some(Declared::Percent(*percent));
+        }
+        if let Some(length) = style.length_or_auto("width", None, Some(base)) {
+            return Some(Declared::Length(length));
+        }
+    }
+    None
+}
+
+fn declared_columns(table: &StyledNode, base: f32) -> Vec<Option<Declared>> {
+    let mut columns = Vec::new();
+    for child in &table.children {
+        let Content::Element(element) = child.content else {
+            continue;
+        };
+        match element.tag_name.as_str() {
+            "col" => {
+                let span = span_attribute(element, "span");
+                columns.extend((0..span).map(|_| declared_width(child, None, base)));
+            }
+            "colgroup" => {
+                let mut inner = false;
+                for column in &child.children {
+                    let Content::Element(col) = column.content else {
+                        continue;
+                    };
+                    if col.tag_name == "col" {
+                        inner = true;
+                        let span = span_attribute(col, "span");
+                        columns
+                            .extend((0..span).map(|_| declared_width(column, Some(child), base)));
+                    }
+                }
+                if !inner {
+                    let span = span_attribute(element, "span");
+                    columns.extend((0..span).map(|_| declared_width(child, None, base)));
+                }
+            }
+            _ => {}
+        }
+        columns.truncate(MAX_SPAN);
+    }
+    columns
+}
+
 fn display_of(layout_box: &LayoutBox) -> Option<Display> {
     match &layout_box.kind {
         BoxKind::Block(style) => Some(style.display()),
@@ -239,6 +292,15 @@ impl<'a> LayoutBox<'a> {
                 }
             }
         }
+        if let BoxKind::Block(style) = &self.kind {
+            let declared = declared_columns(style, 0.0);
+            for (column, width) in declared.iter().enumerate().take(grid.columns) {
+                if let Some(Declared::Percent(percent)) = width {
+                    let slot = &mut percents[column];
+                    *slot = Some(slot.map_or(*percent, |known: f32| known.max(*percent)));
+                }
+            }
+        }
         percents
     }
 
@@ -296,6 +358,15 @@ impl<'a> LayoutBox<'a> {
                     for width in &mut target[span.clone()] {
                         *width += extra;
                     }
+                }
+            }
+        }
+        if let BoxKind::Block(style) = &self.kind {
+            let declared = declared_columns(style, base);
+            for (column, width) in declared.iter().enumerate().take(grid.columns) {
+                if let Some(Declared::Length(length)) = width {
+                    minimum[column] = minimum[column].max(*length);
+                    maximum[column] = maximum[column].max(*length);
                 }
             }
         }
