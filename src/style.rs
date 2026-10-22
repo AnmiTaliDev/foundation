@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::color::Rgba;
+use crate::control::control_text;
 use crate::counters::Counters;
 use crate::css::{self, Color, Declaration, Rule, Specificity, Stylesheet, Value};
 use crate::decoration::{self, Decoration, LineStyle};
@@ -46,9 +47,28 @@ pub const USER_AGENT_STYLESHEET: &str =
     ul { list-style-type: disc; } ol { list-style-type: decimal; } \
     ul ul, ol ul { list-style-type: circle; } \
     ul ul ul, ol ul ul, ul ol ul, ol ol ul { list-style-type: square; } \
-    ul ol, ol ol { list-style-type: decimal; }";
+    ul ol, ol ol { list-style-type: decimal; } \
+    form { display: block; } \
+    fieldset { display: block; margin: 0 2px; padding: 6px 12px 10px; border: 2px groove #c0c0c0; } \
+    legend { display: block; padding: 0 2px; } \
+    button, input, select, textarea { display: inline-block; font-size: 13px; color: #000000; background: #ffffff; border: 1px solid #767676; border-radius: 2px; padding: 1px 2px; box-sizing: border-box; } \
+    input { width: 160px; height: 21px; white-space: pre; overflow: hidden; } \
+    textarea { width: 180px; height: 40px; padding: 2px; white-space: pre-wrap; overflow: hidden; font-family: monospace; vertical-align: text-bottom; } \
+    select { width: 80px; height: 21px; overflow: hidden; white-space: pre; } \
+    option, optgroup, input[type=hidden] { display: none; } \
+    button, input[type=submit], input[type=reset], input[type=button] { width: auto; min-width: 0; height: auto; padding: 1px 6px; background: #efefef; text-align: center; } \
+    input[type=checkbox], input[type=radio] { width: 13px; height: 13px; padding: 0; margin: 3px 3px 3px 4px; } \
+    input[type=radio] { border-radius: 50%; } \
+    input[type=checkbox]:checked { background: #0075ff; border-color: #0075ff; } \
+    input[type=radio]:checked { background: radial-gradient(#0075ff 40%, #ffffff 45%); border-color: #0075ff; } \
+    button:disabled, input:disabled, select:disabled, textarea:disabled { color: #6d6d6d; background: #ebebeb; border-color: #c4c4c4; }";
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
+const PLACEHOLDER_COLOR: Color = Color {
+    r: 117,
+    g: 117,
+    b: 117,
+};
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
@@ -489,6 +509,17 @@ fn style_node<'a>(
                 ));
             }
             walk.ancestors.pop();
+            if let Some(control) = control_text(element, &node.children) {
+                let mut text_values = inherit(&values);
+                if control.placeholder {
+                    text_values.insert("color".to_string(), Value::Color(PLACEHOLDER_COLOR));
+                }
+                children.push(StyledNode {
+                    content: Content::Text(Cow::Owned(control.text)),
+                    specified_values: text_values,
+                    children: Vec::new(),
+                });
+            }
             let after = pseudo_node(
                 scope,
                 walk,

@@ -49,6 +49,11 @@ pub enum AttributeOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pseudo {
     Link,
+    Checked,
+    Disabled,
+    Enabled,
+    Required,
+    Optional,
     Never,
     Root,
     Empty,
@@ -364,6 +369,11 @@ fn parse_pseudo(name: &str, argument: Option<&str>) -> Option<Vec<Pseudo>> {
             "visited" | "hover" | "active" | "focus" | "focus-within" | "focus-visible" | "target",
             None,
         ) => Pseudo::Never,
+        ("checked", None) => Pseudo::Checked,
+        ("disabled", None) => Pseudo::Disabled,
+        ("enabled", None) => Pseudo::Enabled,
+        ("required", None) => Pseudo::Required,
+        ("optional", None) => Pseudo::Optional,
         ("root", None) => Pseudo::Root,
         ("empty", None) => Pseudo::Empty,
         ("first-child", None) => nth(0, 1, false, false),
@@ -559,11 +569,48 @@ fn attribute_matches(element: &ElementData, attribute: &Attribute) -> bool {
     }
 }
 
+fn is_control(element: &ElementData) -> bool {
+    matches!(
+        element.tag_name.as_str(),
+        "input" | "button" | "select" | "textarea"
+    )
+}
+
 fn pseudo_matches(scope: Scope, ancestors: &[Scope], pseudo: &Pseudo) -> bool {
     match pseudo {
         Pseudo::Link => {
             matches!(scope.element.tag_name.as_str(), "a" | "area")
                 && scope.element.attributes.contains_key("href")
+        }
+        Pseudo::Checked => {
+            let element = scope.element;
+            let marked = |name: &str| element.attributes.contains_key(name);
+            match element.tag_name.as_str() {
+                "input" => {
+                    matches!(
+                        element.attributes.get("type").map(String::as_str),
+                        Some("checkbox" | "radio")
+                    ) && marked("checked")
+                }
+                "option" => marked("selected"),
+                _ => false,
+            }
+        }
+        Pseudo::Disabled => {
+            is_control(scope.element) && scope.element.attributes.contains_key("disabled")
+        }
+        Pseudo::Enabled => {
+            is_control(scope.element) && !scope.element.attributes.contains_key("disabled")
+        }
+        Pseudo::Required => {
+            is_control(scope.element)
+                && scope.element.tag_name != "button"
+                && scope.element.attributes.contains_key("required")
+        }
+        Pseudo::Optional => {
+            is_control(scope.element)
+                && scope.element.tag_name != "button"
+                && !scope.element.attributes.contains_key("required")
         }
         Pseudo::Never => false,
         Pseudo::Root => ancestors.is_empty(),

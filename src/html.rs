@@ -181,8 +181,22 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if name == "option" || name == "optgroup" {
+            self.close_open_options(name == "optgroup");
+        }
         if self_closing || VOID_ELEMENTS.contains(&name.as_str()) {
             self.append(Node::element(name, attributes, Vec::new()));
+        } else if name == "textarea" {
+            let mut children = self.parse_raw_text(&name);
+            if let Some(Node {
+                node_type: NodeType::Text(text),
+                ..
+            }) = children.first_mut()
+            {
+                let trimmed = text.strip_prefix('\n').unwrap_or(text);
+                *text = entities::decode(trimmed);
+            }
+            self.append(Node::element(name, attributes, children));
         } else if RAW_TEXT_ELEMENTS.contains(&name.as_str()) {
             let children = self.parse_raw_text(&name);
             self.append(Node::element(name, attributes, children));
@@ -192,6 +206,16 @@ impl<'a> Parser<'a> {
                 attributes,
                 children: Vec::new(),
             });
+        }
+    }
+
+    fn close_open_options(&mut self, group: bool) {
+        while let Some(top) = self.stack.last() {
+            let closes = top.tag_name == "option" || (group && top.tag_name == "optgroup");
+            if !closes || self.stack.len() == 1 {
+                break;
+            }
+            self.close_top();
         }
     }
 
