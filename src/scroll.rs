@@ -11,9 +11,9 @@ pub struct Scrollbars {
     pub offset: (f32, f32),
     pub max: (f32, f32),
     pub show: (bool, bool),
+    pub width: f32,
 }
 
-const SCROLLBAR_WIDTH: f32 = 8.0;
 const SCROLLBAR_MIN_THUMB: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,16 +26,16 @@ pub struct Bar {
 impl Scrollbars {
     pub fn bars(&self, area: Rect) -> Vec<Bar> {
         let corner = if self.show.0 && self.show.1 {
-            SCROLLBAR_WIDTH
+            self.width
         } else {
             0.0
         };
         let mut bars = Vec::new();
         if self.show.1 {
             let track = Rect {
-                x: area.x + area.width - SCROLLBAR_WIDTH,
+                x: area.x + area.width - self.width,
                 y: area.y,
-                width: SCROLLBAR_WIDTH,
+                width: self.width,
                 height: (area.height - corner).max(0.0),
             };
             bars.push(bar(track, true, area.height, self.offset.1, self.max.1));
@@ -43,9 +43,9 @@ impl Scrollbars {
         if self.show.0 {
             let track = Rect {
                 x: area.x,
-                y: area.y + area.height - SCROLLBAR_WIDTH,
+                y: area.y + area.height - self.width,
                 width: (area.width - corner).max(0.0),
-                height: SCROLLBAR_WIDTH,
+                height: self.width,
             };
             bars.push(bar(track, false, area.width, self.offset.0, self.max.0));
         }
@@ -177,9 +177,9 @@ impl LayoutBox<'_> {
 
     fn scroll_walk(&mut self, offsets: &Offsets, fonts: &Fonts, scrollers: &mut Vec<Scroller>) {
         let container = self.scroll_axes().map(|axes| {
-            let always = match self.kind {
-                BoxKind::Block(style) => style.scrollbars_always(),
-                BoxKind::Anonymous(_) => (false, false),
+            let (always, bar_width) = match self.kind {
+                BoxKind::Block(style) => (style.scrollbars_always(), style.scrollbar_width()),
+                BoxKind::Anonymous(_) => ((false, false), 8.0),
             };
             let padding = self.dimensions.padding_box();
             let (width, height) = self.scroll_size(fonts);
@@ -203,9 +203,10 @@ impl LayoutBox<'_> {
                 offset,
                 max,
                 show: (
-                    axes.0 && (always.0 || max.0 > 0.0),
-                    axes.1 && (always.1 || max.1 > 0.0),
+                    bar_width > 0.0 && axes.0 && (always.0 || max.0 > 0.0),
+                    bar_width > 0.0 && axes.1 && (always.1 || max.1 > 0.0),
                 ),
+                width: bar_width,
             });
             offset
         });

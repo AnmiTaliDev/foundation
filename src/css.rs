@@ -988,6 +988,19 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             _ => Vec::new(),
         };
     }
+    if name == "scrollbar-width" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword))
+                if matches!(keyword.as_str(), "auto" | "thin" | "none") =>
+            {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
     if name == "object-fit" {
         return match parse_value(value) {
             Some(Value::Keyword(keyword))

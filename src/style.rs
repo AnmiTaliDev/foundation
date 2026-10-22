@@ -1286,6 +1286,14 @@ impl<'a> StyledNode<'a> {
         )
     }
 
+    pub fn scrollbar_width(&self) -> f32 {
+        match self.keyword("scrollbar-width") {
+            Some("none") => 0.0,
+            Some("thin") => 4.0,
+            _ => 8.0,
+        }
+    }
+
     fn overflow_is(&self, keywords: &[&str]) -> bool {
         ["overflow-x", "overflow-y"].iter().any(|name| {
             matches!(
