@@ -79,3 +79,8 @@ fn other_at_rules_are_still_skipped() {
         ["c"]
     );
 }
+
+#[test]
+fn table_layout_is_supported() {
+    assert!(foundation::supports::evaluate("(table-layout: fixed)"));
+}
