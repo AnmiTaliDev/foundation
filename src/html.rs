@@ -8,6 +8,47 @@ const VOID_ELEMENTS: [&str; 14] = [
     "track", "wbr",
 ];
 
+const PARAGRAPH_CLOSERS: [&str; 38] = [
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "center",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "dd",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "hr",
+    "li",
+    "main",
+    "menu",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "summary",
+    "table",
+    "ul",
+    "listing",
+];
+
 const RAW_TEXT_ELEMENTS: [&str; 2] = ["script", "style"];
 
 struct OpenElement {
@@ -181,9 +222,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if name == "option" || name == "optgroup" {
-            self.close_open_options(name == "optgroup");
-        }
+        self.close_implied(&name);
         if self_closing || VOID_ELEMENTS.contains(&name.as_str()) {
             self.append(Node::element(name, attributes, Vec::new()));
         } else if name == "textarea" {
@@ -209,13 +248,39 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn close_open_options(&mut self, group: bool) {
-        while let Some(top) = self.stack.last() {
-            let closes = top.tag_name == "option" || (group && top.tag_name == "optgroup");
-            if !closes || self.stack.len() == 1 {
+    fn close_implied(&mut self, name: &str) {
+        match name {
+            "li" => self.close_through(&["li"], &["ul", "ol", "dl", "table", "td", "th"]),
+            "dt" | "dd" => self.close_through(&["dt", "dd"], &["dl", "table", "td", "th"]),
+            "tr" => self.close_through(&["tr", "td", "th"], &["table"]),
+            "td" | "th" => self.close_through(&["td", "th"], &["tr", "table"]),
+            "thead" | "tbody" | "tfoot" => {
+                self.close_through(&["thead", "tbody", "tfoot", "tr", "td", "th"], &["table"])
+            }
+            "option" => self.close_through(&["option"], &["select"]),
+            "optgroup" => self.close_through(&["option", "optgroup"], &["select"]),
+            _ => {}
+        }
+        if PARAGRAPH_CLOSERS.contains(&name) {
+            self.close_through(&["p"], &["table", "td", "th", "button"]);
+        }
+    }
+
+    fn close_through(&mut self, targets: &[&str], stops: &[&str]) {
+        let mut found = None;
+        for index in (1..self.stack.len()).rev() {
+            let tag = self.stack[index].tag_name.as_str();
+            if stops.contains(&tag) {
                 break;
             }
-            self.close_top();
+            if targets.contains(&tag) {
+                found = Some(index);
+            }
+        }
+        if let Some(index) = found {
+            while self.stack.len() > index {
+                self.close_top();
+            }
         }
     }
 
