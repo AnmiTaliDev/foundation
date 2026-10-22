@@ -304,6 +304,17 @@ impl<'a> LayoutBox<'a> {
         percents
     }
 
+    fn column_fixed(&self, grid: &Grid, base: f32) -> Vec<bool> {
+        let mut fixed = vec![false; grid.columns];
+        if let BoxKind::Block(style) = &self.kind {
+            let declared = declared_columns(style, base);
+            for (column, width) in declared.iter().enumerate().take(grid.columns) {
+                fixed[column] = matches!(width, Some(Declared::Length(_)));
+            }
+        }
+        fixed
+    }
+
     fn caption_width(&self, mode: Intrinsic, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         self.children
             .iter()
@@ -453,6 +464,8 @@ impl<'a> LayoutBox<'a> {
         let available = (width - gaps.x * (columns + 1) as f32).max(0.0);
         let (minimum, maximum) = self.column_limits(&grid, gaps.x, fonts, images, width);
         let percents = self.column_percents(&grid);
+        let fixed = self.column_fixed(&grid, width);
+        let has_free = (0..grid.columns).any(|index| percents[index].is_none() && !fixed[index]);
         let mut widths = vec![0.0f32; grid.columns];
         let mut remaining = available;
         let mut flexible = Vec::new();
@@ -460,6 +473,10 @@ impl<'a> LayoutBox<'a> {
             match percent {
                 Some(percent) => {
                     widths[index] = (percent / 100.0 * width).max(minimum[index]);
+                    remaining -= widths[index];
+                }
+                None if fixed[index] && has_free => {
+                    widths[index] = minimum[index];
                     remaining -= widths[index];
                 }
                 None => flexible.push(index),
