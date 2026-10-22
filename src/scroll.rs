@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 
+use crate::css::Color;
 use crate::layout::{BoxKind, LayoutBox, Rect};
-use crate::style::{Content, Position};
+use crate::style::{Content, Position, SCROLLBAR_THUMB, SCROLLBAR_TRACK};
 use crate::text::Fonts;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -12,6 +13,8 @@ pub struct Scrollbars {
     pub max: (f32, f32),
     pub show: (bool, bool),
     pub width: f32,
+    pub thumb: Color,
+    pub track: Color,
 }
 
 const SCROLLBAR_MIN_THUMB: f32 = 10.0;
@@ -177,9 +180,13 @@ impl LayoutBox<'_> {
 
     fn scroll_walk(&mut self, offsets: &Offsets, fonts: &Fonts, scrollers: &mut Vec<Scroller>) {
         let container = self.scroll_axes().map(|axes| {
-            let (always, bar_width) = match self.kind {
-                BoxKind::Block(style) => (style.scrollbars_always(), style.scrollbar_width()),
-                BoxKind::Anonymous(_) => ((false, false), 8.0),
+            let (always, bar_width, colors) = match self.kind {
+                BoxKind::Block(style) => (
+                    style.scrollbars_always(),
+                    style.scrollbar_width(),
+                    style.scrollbar_colors(),
+                ),
+                BoxKind::Anonymous(_) => ((false, false), 8.0, (SCROLLBAR_THUMB, SCROLLBAR_TRACK)),
             };
             let padding = self.dimensions.padding_box();
             let (width, height) = self.scroll_size(fonts);
@@ -207,6 +214,8 @@ impl LayoutBox<'_> {
                     bar_width > 0.0 && axes.1 && (always.1 || max.1 > 0.0),
                 ),
                 width: bar_width,
+                thumb: colors.0,
+                track: colors.1,
             });
             offset
         });

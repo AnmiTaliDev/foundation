@@ -64,6 +64,16 @@ pub const USER_AGENT_STYLESHEET: &str =
     button:disabled, input:disabled, select:disabled, textarea:disabled { color: #6d6d6d; background: #ebebeb; border-color: #c4c4c4; }";
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
+pub const SCROLLBAR_THUMB: Color = Color {
+    r: 193,
+    g: 193,
+    b: 193,
+};
+pub const SCROLLBAR_TRACK: Color = Color {
+    r: 241,
+    g: 241,
+    b: 241,
+};
 const PLACEHOLDER_COLOR: Color = Color {
     r: 117,
     g: 117,
@@ -72,7 +82,9 @@ const PLACEHOLDER_COLOR: Color = Color {
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 16] = [
+const INHERITED_PROPERTIES: [&str; 18] = [
+    "scrollbar-thumb-color",
+    "scrollbar-track-color",
     "quotes",
     "word-break",
     "overflow-wrap",
@@ -1283,6 +1295,15 @@ impl<'a> StyledNode<'a> {
         (
             self.keyword("overflow-x") == Some("scroll"),
             self.keyword("overflow-y") == Some("scroll"),
+        )
+    }
+
+    pub fn scrollbar_colors(&self) -> (Color, Color) {
+        (
+            self.color("scrollbar-thumb-color")
+                .unwrap_or(SCROLLBAR_THUMB),
+            self.color("scrollbar-track-color")
+                .unwrap_or(SCROLLBAR_TRACK),
         )
     }
 

@@ -977,24 +977,13 @@ fn paint_stacking_contents(
     emit(list, fixed, outline_commands(layout_box));
 }
 
-const SCROLLBAR_TRACK: Color = Color {
-    r: 241,
-    g: 241,
-    b: 241,
-};
-const SCROLLBAR_THUMB: Color = Color {
-    r: 193,
-    g: 193,
-    b: 193,
-};
-
 fn scrollbar_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let mut list = Vec::new();
     let Some(bars) = layout_box.scrollbars else {
         return list;
     };
     for bar in bars.bars(layout_box.dimensions.padding_box()) {
-        for (color, rect) in [(SCROLLBAR_TRACK, bar.track), (SCROLLBAR_THUMB, bar.thumb)] {
+        for (color, rect) in [(bars.track, bar.track), (bars.thumb, bar.thumb)] {
             list.push(DisplayCommand::Rect(SolidRect {
                 color,
                 alpha: 255,

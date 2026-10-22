@@ -988,6 +988,29 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             _ => Vec::new(),
         };
     }
+    if name == "scrollbar-color" {
+        let tokens = split_values(value);
+        let colors: Vec<Value> = match tokens.as_slice() {
+            [one] if one.eq_ignore_ascii_case("auto") => {
+                vec![Value::Keyword("auto".to_string()); 2]
+            }
+            [thumb, track] => [thumb, track]
+                .into_iter()
+                .filter_map(|token| match parse_value(token) {
+                    Some(color @ Value::Color(_)) => Some(color),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        return match <[Value; 2]>::try_from(colors) {
+            Ok([thumb, track]) => vec![
+                declaration("scrollbar-thumb-color", thumb),
+                declaration("scrollbar-track-color", track),
+            ],
+            Err(_) => Vec::new(),
+        };
+    }
     if name == "scrollbar-width" {
         return match parse_value(value) {
             Some(Value::Keyword(keyword))
