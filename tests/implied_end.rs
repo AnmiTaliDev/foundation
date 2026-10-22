@@ -77,11 +77,11 @@ fn definition_terms_and_descriptions_close_each_other() {
 fn table_cells_and_rows_close_implicitly() {
     assert_eq!(
         parse("<table><tr><td>a<td>b<tr><td>c</table>"),
-        "body(table(tr(td(t),td(t)),tr(td(t))))"
+        "body(table(tbody(tr(td(t),td(t)),tr(td(t)))))"
     );
     assert_eq!(
         parse("<table><tr><th>a<th>b<tr><td>c</table>"),
-        "body(table(tr(th(t),th(t)),tr(td(t))))"
+        "body(table(tbody(tr(th(t),th(t)),tr(td(t)))))"
     );
 }
 
@@ -97,7 +97,7 @@ fn table_sections_close_each_other() {
 fn nested_tables_are_not_closed() {
     assert_eq!(
         parse("<table><tr><td><table><tr><td>a</table><td>b</table>"),
-        "body(table(tr(td(table(tr(td(t)))),td(t))))"
+        "body(table(tbody(tr(td(table(tbody(tr(td(t))))),td(t)))))"
     );
 }
 
@@ -105,7 +105,7 @@ fn nested_tables_are_not_closed() {
 fn paragraph_inside_a_cell_does_not_close_outside() {
     assert_eq!(
         parse("<p>x<table><tr><td><p>a<td>b</table>"),
-        "body(p(t),table(tr(td(p(t)),td(t))))"
+        "body(p(t),table(tbody(tr(td(p(t)),td(t)))))"
     );
 }
 

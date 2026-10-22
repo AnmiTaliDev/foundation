@@ -223,6 +223,7 @@ impl<'a> Parser<'a> {
         }
 
         self.close_implied(&name);
+        self.open_implied(&name);
         if self_closing || VOID_ELEMENTS.contains(&name.as_str()) {
             self.append(Node::element(name, attributes, Vec::new()));
         } else if name == "textarea" {
@@ -264,6 +265,30 @@ impl<'a> Parser<'a> {
         if PARAGRAPH_CLOSERS.contains(&name) {
             self.close_through(&["p"], &["table", "td", "th", "button"]);
         }
+    }
+
+    fn open_implied(&mut self, name: &str) {
+        if !matches!(name, "tr" | "td" | "th") {
+            return;
+        }
+        if self.stack.last().unwrap().tag_name == "table" {
+            self.push_implied("tbody");
+        }
+        let in_section = matches!(
+            self.stack.last().unwrap().tag_name.as_str(),
+            "thead" | "tbody" | "tfoot"
+        );
+        if name != "tr" && in_section {
+            self.push_implied("tr");
+        }
+    }
+
+    fn push_implied(&mut self, tag_name: &str) {
+        self.stack.push(OpenElement {
+            tag_name: tag_name.to_string(),
+            attributes: AttrMap::new(),
+            children: Vec::new(),
+        });
     }
 
     fn close_through(&mut self, targets: &[&str], stops: &[&str]) {
