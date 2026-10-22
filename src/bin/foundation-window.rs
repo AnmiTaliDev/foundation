@@ -4,7 +4,7 @@ use std::env;
 use std::process::ExitCode;
 
 use foundation::Page;
-use minifb::{Key, KeyRepeat, MouseMode, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 
 const DEFAULT_WIDTH: usize = 800;
 const DEFAULT_HEIGHT: usize = 600;
@@ -61,6 +61,8 @@ fn run(path: &str) -> Result<(), String> {
     let mut scroll_y = 0.0;
     let mut content_height = 0.0;
     let mut buffer = Vec::new();
+    let mut grab = None;
+    let mut mouse_was_down = false;
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let (width, height) = window.get_size();
         if width == 0 || height == 0 {
@@ -78,6 +80,20 @@ fn run(path: &str) -> Result<(), String> {
                 wheel = remaining.1;
             }
         }
+        let mouse_down = window.get_mouse_down(MouseButton::Left);
+        if !mouse_down {
+            grab = None;
+        } else if let Some(held) = grab {
+            if let Some(point) = window.get_mouse_pos(MouseMode::Clamp) {
+                page.scroll_drag((width, height), scroll_y, held, point);
+                scrolled = true;
+            }
+        } else if !mouse_was_down {
+            if let Some(point) = window.get_mouse_pos(MouseMode::Discard) {
+                grab = page.scroll_grab((width, height), scroll_y, point);
+            }
+        }
+        mouse_was_down = mouse_down;
         let mut target = scroll_y + wheel + scroll_delta(&window, height);
         if window.is_key_pressed(Key::Home, KeyRepeat::No) {
             target = 0.0;
