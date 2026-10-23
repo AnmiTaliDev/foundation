@@ -115,3 +115,41 @@ fn every_side_is_read() {
         .collect();
     assert_eq!(sides, vec![1.0, 2.0, 3.0, 4.0]);
 }
+
+#[test]
+fn a_higher_source_priority_wins_a_full_tie() {
+    let cell = right("border-right: 2px solid red").from_source(5);
+    let row = right("border-right: 2px solid blue").from_source(4);
+    assert_eq!(Edge::resolve(row, cell), cell);
+    assert_eq!(Edge::resolve(cell, row), cell);
+}
+
+#[test]
+fn priority_does_not_beat_width_or_style() {
+    let cell = right("border-right: 1px solid red").from_source(5);
+    let row = right("border-right: 2px solid blue").from_source(4);
+    assert_eq!(Edge::resolve(cell, row), row);
+    let dashed = right("border-right: 2px dashed red").from_source(5);
+    assert_eq!(Edge::resolve(dashed, row), row);
+}
+
+#[test]
+fn hidden_anywhere_in_a_list_removes_the_border() {
+    let line = right("border-right: 3px solid red");
+    let hidden = right("border-right: 1px hidden");
+    assert_eq!(Edge::resolve_all(&[line, line, hidden, line]), Edge::NONE);
+    assert_eq!(Edge::resolve_all(&[line, hidden, line]), Edge::NONE);
+}
+
+#[test]
+fn an_empty_list_has_no_border() {
+    assert_eq!(Edge::resolve_all(&[]), Edge::NONE);
+}
+
+#[test]
+fn the_earliest_edge_wins_among_equals_in_a_list() {
+    let first = right("border-right: 2px solid red");
+    let second = right("border-right: 2px solid blue");
+    let third = right("border-right: 2px solid lime");
+    assert_eq!(Edge::resolve_all(&[first, second, third]), first);
+}

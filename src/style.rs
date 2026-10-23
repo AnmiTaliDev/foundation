@@ -1049,6 +1049,7 @@ impl<'a> StyledNode<'a> {
             },
             rank,
             hidden: keyword == Some("hidden"),
+            priority: 0,
             stroke: self.border_style(side),
             color: self.border_color(side),
         }
