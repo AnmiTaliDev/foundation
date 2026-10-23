@@ -574,7 +574,7 @@ impl<'a> LayoutBox<'a> {
                 self.dimensions.rtl = style.rtl();
                 self.forced_width = given_width;
                 if table {
-                    self.center_table(style, containing.content.width);
+                    self.center_table(style, containing.content.width, containing.rtl);
                 }
                 self.calculate_position(style, containing);
                 if style.display() == Display::Flex {
@@ -1019,16 +1019,19 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    fn center_table(&mut self, style: &StyledNode, container: f32) {
+    fn center_table(&mut self, style: &StyledNode, container: f32, rtl: bool) {
         let is_auto = |name: &str| matches!(style.value(name), Some(Value::Keyword(keyword)) if keyword == "auto");
         let auto_left = is_auto("margin-left");
         let auto_right = is_auto("margin-right");
-        if !auto_left && !auto_right {
-            return;
-        }
         let d = &mut self.dimensions;
         let used =
             d.content.width + d.padding.left + d.padding.right + d.border.left + d.border.right;
+        if !auto_left && !auto_right {
+            if rtl {
+                d.margin.left += (container - used - d.margin.left - d.margin.right).max(0.0);
+            }
+            return;
+        }
         let fixed_left = if auto_left { 0.0 } else { d.margin.left };
         let fixed_right = if auto_right { 0.0 } else { d.margin.right };
         let free = (container - used - fixed_left - fixed_right).max(0.0);

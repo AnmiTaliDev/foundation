@@ -476,12 +476,15 @@ impl<'a> LayoutBox<'a> {
         if !table.border_collapse() {
             return vec![Plan::OPEN; grid.cells.len()];
         }
-        let table_borders = [
+        let rtl = table.rtl();
+        let flip = |side: usize| if rtl && side % 2 == 1 { 4 - side } else { side };
+        let physical_borders = [
             table.px("border-top-width", 0.0) > 0.0,
             table.px("border-right-width", 0.0) > 0.0,
             table.px("border-bottom-width", 0.0) > 0.0,
             table.px("border-left-width", 0.0) > 0.0,
         ];
+        let table_borders = [0, 1, 2, 3].map(|side| physical_borders[flip(side)]);
         let columns = column_sources(table);
         let rows = grid.rows.len();
         let cell_style = |cell: &Cell| match &self.cell_box(cell).kind {
@@ -504,7 +507,7 @@ impl<'a> LayoutBox<'a> {
         let last_in_group =
             |row: usize| row + 1 == rows || grid.rows[row + 1].group != grid.rows[row].group;
         let edge = |style: Option<&StyledNode>, side: usize, priority: u8| {
-            style.map(|style| style.border_edge(side).from_source(priority))
+            style.map(|style| style.border_edge(flip(side)).from_source(priority))
         };
         grid.cells
             .iter()
@@ -619,6 +622,12 @@ impl<'a> LayoutBox<'a> {
                     if suppressed[side] {
                         edges[side] = None;
                     }
+                }
+                if rtl {
+                    return Plan {
+                        suppressed: [suppressed[0], suppressed[3], suppressed[2], suppressed[1]],
+                        edges: [edges[0], edges[3], edges[2], edges[1]],
+                    };
                 }
                 Plan { suppressed, edges }
             })
@@ -1098,6 +1107,14 @@ impl<'a> LayoutBox<'a> {
             }
         }
 
+        if style.rtl() {
+            let sum = 2.0 * left + width;
+            for cell in &grid.cells {
+                let cell_box = self.cell_box_mut(cell);
+                let border = cell_box.dimensions.border_box();
+                cell_box.translate(sum - 2.0 * border.x - border.width, 0.0);
+            }
+        }
         self.dimensions.content.height = y - top;
     }
 }
