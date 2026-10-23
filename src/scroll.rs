@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::css::Color;
 use crate::layout::{BoxKind, LayoutBox, Rect};
+use crate::snap::{SnapAlign, SnapPoint, Strictness};
 use crate::style::{Content, Position, SCROLLBAR_THUMB, SCROLLBAR_TRACK};
 use crate::text::Fonts;
 
@@ -140,11 +141,14 @@ impl Scrollbars {
 
 pub type Offsets = HashMap<usize, (f32, f32)>;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Scroller {
     pub offset: (f32, f32),
     pub max: (f32, f32),
     pub axes: (bool, bool),
+    pub port: (f32, f32),
+    pub snap: (Option<Strictness>, Option<Strictness>),
+    pub points: (Vec<SnapPoint>, Vec<SnapPoint>),
 }
 
 impl LayoutBox<'_> {
@@ -206,7 +210,35 @@ impl LayoutBox<'_> {
             let index = scrollers.len();
             let wanted = offsets.get(&index).copied().unwrap_or((0.0, 0.0));
             let offset = (wanted.0.clamp(0.0, max.0), wanted.1.clamp(0.0, max.1));
-            scrollers.push(Scroller { offset, max, axes });
+            let snap = match self.kind {
+                BoxKind::Block(style) => style.scroll_snap_type(),
+                BoxKind::Anonymous(_) => (None, None),
+            };
+            let mut points = (Vec::new(), Vec::new());
+            if snap.0.is_some() || snap.1.is_some() {
+                let mut found = (Vec::new(), Vec::new());
+                self.collect_snap_points(padding, max, &mut found);
+                points = (
+                    if snap.0.is_some() {
+                        sorted(found.0)
+                    } else {
+                        Vec::new()
+                    },
+                    if snap.1.is_some() {
+                        sorted(found.1)
+                    } else {
+                        Vec::new()
+                    },
+                );
+            }
+            scrollers.push(Scroller {
+                offset,
+                max,
+                axes,
+                port: (padding.width, padding.height),
+                snap,
+                points,
+            });
             self.scrollbars = Some(Scrollbars {
                 offset,
                 max,
@@ -226,6 +258,34 @@ impl LayoutBox<'_> {
         if let Some((x, y)) = container {
             if x != 0.0 || y != 0.0 {
                 self.shift_content(-x, -y);
+            }
+        }
+    }
+
+    fn collect_snap_points(
+        &self,
+        port: Rect,
+        max: (f32, f32),
+        found: &mut (Vec<SnapPoint>, Vec<SnapPoint>),
+    ) {
+        for child in &self.children {
+            let BoxKind::Block(style) = child.kind else {
+                child.collect_snap_points(port, max, found);
+                continue;
+            };
+            let (align_x, align_y) = style.scroll_snap_align();
+            let area = child.dimensions.border_box();
+            let always = style.scroll_snap_stop_always();
+            let x = snap_position(align_x, (area.x, area.width), (port.x, port.width), max.0);
+            let y = snap_position(align_y, (area.y, area.height), (port.y, port.height), max.1);
+            found
+                .0
+                .extend(x.map(|position| SnapPoint { position, always }));
+            found
+                .1
+                .extend(y.map(|position| SnapPoint { position, always }));
+            if child.scroll_axes().is_none() {
+                child.collect_snap_points(port, max, found);
             }
         }
     }
@@ -315,6 +375,28 @@ impl LayoutBox<'_> {
             }
         }
     }
+}
+
+fn snap_position(align: SnapAlign, area: (f32, f32), port: (f32, f32), limit: f32) -> Option<f32> {
+    let position = match align {
+        SnapAlign::None => return None,
+        SnapAlign::Start => area.0 - port.0,
+        SnapAlign::Center => area.0 + area.1 / 2.0 - (port.0 + port.1 / 2.0),
+        SnapAlign::End => area.0 + area.1 - (port.0 + port.1),
+    };
+    Some(position.clamp(0.0, limit))
+}
+
+fn sorted(mut points: Vec<SnapPoint>) -> Vec<SnapPoint> {
+    points.sort_by(|a, b| a.position.total_cmp(&b.position));
+    points.dedup_by(|later, earlier| {
+        let same = later.position == earlier.position;
+        if same {
+            earlier.always |= later.always;
+        }
+        same
+    });
+    points
 }
 
 fn reach(extent: &mut (f32, f32), x: f32, y: f32) {

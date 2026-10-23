@@ -13,6 +13,7 @@ use crate::location::Location;
 use crate::paint::{self, Canvas};
 use crate::picture;
 use crate::scroll::{Grab, Offsets, Scroller};
+use crate::snap;
 use crate::style::{self, StyleSource};
 use crate::{html, text};
 
@@ -198,10 +199,23 @@ impl Page {
         let moved = self.scrolled_layout(size, |root, scrollers| {
             let (area, scrollbars) = *root.scroller_bars().get(grab.index)?;
             let offset = scrollbars.dragged_offset(area, grab, point.0, y)?;
-            let current = scrollers.get(grab.index)?.offset;
+            let scroller = scrollers.get(grab.index)?;
+            let current = scroller.offset;
             Some(if grab.vertical {
+                let offset = match scroller.snap.1 {
+                    Some(strictness) => {
+                        snap::snap_nearest(&scroller.points.1, strictness, offset, scroller.port.1)
+                    }
+                    None => offset,
+                };
                 (current.0, offset)
             } else {
+                let offset = match scroller.snap.0 {
+                    Some(strictness) => {
+                        snap::snap_nearest(&scroller.points.0, strictness, offset, scroller.port.0)
+                    }
+                    None => offset,
+                };
                 (offset, current.1)
             })
         });
@@ -225,21 +239,30 @@ impl Page {
         };
         let (mut remaining_x, mut remaining_y) = delta;
         for index in hits.into_iter().rev() {
-            let scroller = scrollers[index];
+            let scroller = scrollers[index].clone();
             let (x, y) = scroller.offset;
-            let next_x = if scroller.axes.0 {
-                (x + remaining_x).clamp(0.0, scroller.max.0)
-            } else {
-                x
-            };
-            let next_y = if scroller.axes.1 {
-                (y + remaining_y).clamp(0.0, scroller.max.1)
-            } else {
-                y
-            };
-            remaining_x -= next_x - x;
-            remaining_y -= next_y - y;
-            self.scrolls.insert(index, (next_x, next_y));
+            let mut next = (x, y);
+            if scroller.axes.0 {
+                (next.0, remaining_x) = snap::advance(
+                    x,
+                    remaining_x,
+                    scroller.max.0,
+                    scroller.snap.0,
+                    &scroller.points.0,
+                    scroller.port.0,
+                );
+            }
+            if scroller.axes.1 {
+                (next.1, remaining_y) = snap::advance(
+                    y,
+                    remaining_y,
+                    scroller.max.1,
+                    scroller.snap.1,
+                    &scroller.points.1,
+                    scroller.port.1,
+                );
+            }
+            self.scrolls.insert(index, next);
             if remaining_x == 0.0 && remaining_y == 0.0 {
                 break;
             }
