@@ -643,8 +643,15 @@ fn emit(list: &mut DisplayList, fixed: bool, commands: Vec<DisplayCommand>) {
     }
 }
 
+fn is_hidden(layout_box: &LayoutBox) -> bool {
+    matches!(layout_box.kind, BoxKind::Block(style) if !style.visible())
+}
+
 fn decoration_commands(layout_box: &LayoutBox, view: View) -> Vec<DisplayCommand> {
     let mut commands = Vec::new();
+    if is_hidden(layout_box) {
+        return commands;
+    }
     paint_shadows(layout_box, false, &mut commands);
     paint_background(layout_box, view, &mut commands);
     paint_shadows(layout_box, true, &mut commands);
@@ -982,6 +989,9 @@ fn scrollbar_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let Some(bars) = layout_box.scrollbars else {
         return list;
     };
+    if is_hidden(layout_box) {
+        return list;
+    }
     for bar in bars.bars(layout_box.dimensions.padding_box()) {
         for (color, rect) in [(bars.track, bar.track), (bars.thumb, bar.thumb)] {
             list.push(DisplayCommand::Rect(SolidRect {
@@ -1288,6 +1298,9 @@ fn outline_commands(layout_box: &LayoutBox) -> Vec<DisplayCommand> {
     let BoxKind::Block(style) = layout_box.kind else {
         return list;
     };
+    if !style.visible() {
+        return list;
+    }
     let Some(outline) = style.outline() else {
         return list;
     };

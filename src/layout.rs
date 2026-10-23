@@ -231,10 +231,11 @@ fn inline_box_style(node: &StyledNode, id: usize) -> Option<Rc<InlineBoxStyle>> 
     if !decorated {
         return None;
     }
+    let visible = node.visible();
     Some(Rc::new(InlineBoxStyle {
         id,
-        background,
-        border_color: node.color("border-top-color"),
+        background: background.filter(|_| visible),
+        border_color: node.color("border-top-color").filter(|_| visible),
         padding,
         border,
         margin_left,
@@ -323,7 +324,7 @@ fn collect_child<'a>(
                     natural,
                 );
                 flow.items.push(InlineItem::Image(ImageRun {
-                    picture,
+                    picture: picture.filter(|_| node.visible()),
                     drawn,
                     width,
                     height,
@@ -464,7 +465,7 @@ pub(crate) fn block_replaced(
     Some(Replaced {
         width,
         height,
-        picture,
+        picture: picture.filter(|_| style.visible()),
     })
 }
 

@@ -83,7 +83,8 @@ const PLACEHOLDER_COLOR: Color = Color {
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 18] = [
+const INHERITED_PROPERTIES: [&str; 19] = [
+    "visibility",
     "scrollbar-thumb-color",
     "scrollbar-track-color",
     "quotes",
@@ -1279,6 +1280,9 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn decorations(&self) -> &[Decoration] {
+        if !self.visible() {
+            return &[];
+        }
         match self.value(ACTIVE_DECORATIONS) {
             Some(Value::Decorations(list)) => list,
             _ => &[],
@@ -1634,7 +1638,14 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn text_alpha(&self) -> u8 {
+        if !self.visible() {
+            return 0;
+        }
         self.rgba("color").map_or(255, |rgba| rgba.alpha)
+    }
+
+    pub fn visible(&self) -> bool {
+        !matches!(self.keyword("visibility"), Some("hidden" | "collapse"))
     }
 
     pub fn background_gradient(&self, index: usize) -> Option<&Gradient> {
