@@ -38,7 +38,7 @@ pub const USER_AGENT_STYLESHEET: &str =
     table { display: table; border-spacing: 2px; } \
     thead, tbody, tfoot { display: table-row-group; } \
     tr { display: table-row; } \
-    td, th { display: table-cell; padding: 1px; vertical-align: middle; } \
+    td, th { display: table-cell; padding: 1px; } \
     th { font-weight: bold; text-align: center; } \
     caption { text-align: center; } \
     colgroup, col { display: none; } \

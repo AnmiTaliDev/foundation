@@ -634,7 +634,15 @@ impl<'a> LayoutBox<'a> {
             BoxKind::Block(style) => style.vertical_align().map(str::to_string),
             BoxKind::Anonymous(_) => None,
         };
-        own.or(row).unwrap_or_else(|| "middle".to_string())
+        let group = grid.rows[cell.row]
+            .group
+            .and_then(|group| match &self.children[group].kind {
+                BoxKind::Block(style) => style.vertical_align().map(str::to_string),
+                BoxKind::Anonymous(_) => None,
+            });
+        own.or(row)
+            .or(group)
+            .unwrap_or_else(|| "middle".to_string())
     }
 
     fn first_baseline(&self) -> Option<f32> {
