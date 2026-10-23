@@ -1367,6 +1367,24 @@ impl<'a> StyledNode<'a> {
         (inline, block)
     }
 
+    pub fn scroll_padding(&self, port: (f32, f32)) -> [f32; 4] {
+        [
+            self.px("scroll-padding-top", port.1),
+            self.px("scroll-padding-right", port.0),
+            self.px("scroll-padding-bottom", port.1),
+            self.px("scroll-padding-left", port.0),
+        ]
+    }
+
+    pub fn scroll_margin(&self) -> [f32; 4] {
+        [
+            self.px("scroll-margin-top", 0.0),
+            self.px("scroll-margin-right", 0.0),
+            self.px("scroll-margin-bottom", 0.0),
+            self.px("scroll-margin-left", 0.0),
+        ]
+    }
+
     pub fn scroll_snap_stop_always(&self) -> bool {
         self.keyword("scroll-snap-stop") == Some("always")
     }

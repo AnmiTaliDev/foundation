@@ -131,12 +131,28 @@ const BORDER_COLOR_PROPERTIES: [&str; 4] = [
     "border-left-color",
 ];
 
-const BOX_SHORTHANDS: [(&str, [&str; 4]); 5] = [
+const SCROLL_PADDING_PROPERTIES: [&str; 4] = [
+    "scroll-padding-top",
+    "scroll-padding-right",
+    "scroll-padding-bottom",
+    "scroll-padding-left",
+];
+
+const SCROLL_MARGIN_PROPERTIES: [&str; 4] = [
+    "scroll-margin-top",
+    "scroll-margin-right",
+    "scroll-margin-bottom",
+    "scroll-margin-left",
+];
+
+const BOX_SHORTHANDS: [(&str, [&str; 4]); 7] = [
     ("margin", MARGIN_PROPERTIES),
     ("padding", PADDING_PROPERTIES),
     ("border-width", BORDER_WIDTH_PROPERTIES),
     ("border-style", BORDER_STYLE_PROPERTIES),
     ("border-color", BORDER_COLOR_PROPERTIES),
+    ("scroll-padding", SCROLL_PADDING_PROPERTIES),
+    ("scroll-margin", SCROLL_MARGIN_PROPERTIES),
 ];
 
 const FONT_SIZE_KEYWORDS: [(&str, f32); 7] = [
