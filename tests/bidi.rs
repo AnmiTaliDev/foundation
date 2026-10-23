@@ -146,3 +146,31 @@ fn visual_reversal_keeps_marks_after_their_base() {
     assert_eq!(bidi::reverse_visual("a\u{0301}b"), "ba\u{0301}");
     assert_eq!(bidi::reverse_visual(""), "");
 }
+
+#[test]
+fn paired_characters_are_mirrored() {
+    assert_eq!(bidi::mirror('('), ')');
+    assert_eq!(bidi::mirror(')'), '(');
+    assert_eq!(bidi::mirror('['), ']');
+    assert_eq!(bidi::mirror('}'), '{');
+    assert_eq!(bidi::mirror('<'), '>');
+    assert_eq!(bidi::mirror('\u{00BB}'), '\u{00AB}');
+    assert_eq!(bidi::mirror('\u{3008}'), '\u{3009}');
+    assert_eq!(bidi::mirror('a'), 'a');
+    assert_eq!(bidi::mirror('\u{05D0}'), '\u{05D0}');
+}
+
+#[test]
+fn every_mirror_is_its_own_inverse() {
+    for c in "()[]{}<>\u{00AB}\u{00BB}\u{2039}\u{203A}\u{2264}\u{2265}\u{300C}\u{300D}".chars() {
+        assert_eq!(bidi::mirror(bidi::mirror(c)), c);
+        assert_ne!(bidi::mirror(c), c);
+    }
+}
+
+#[test]
+fn visual_reversal_mirrors_brackets() {
+    assert_eq!(bidi::reverse_visual("(ab)"), "(ba)");
+    assert_eq!(bidi::reverse_visual("a(b"), "b)a");
+    assert_eq!(bidi::reverse_visual("[x]"), "[x]");
+}

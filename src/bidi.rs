@@ -216,6 +216,43 @@ pub fn reorder(levels: &[u8]) -> Vec<usize> {
     order
 }
 
+const MIRRORED: [(char, char); 22] = [
+    ('(', ')'),
+    ('[', ']'),
+    ('{', '}'),
+    ('<', '>'),
+    ('\u{00AB}', '\u{00BB}'),
+    ('\u{2039}', '\u{203A}'),
+    ('\u{2045}', '\u{2046}'),
+    ('\u{207D}', '\u{207E}'),
+    ('\u{208D}', '\u{208E}'),
+    ('\u{2264}', '\u{2265}'),
+    ('\u{2268}', '\u{2269}'),
+    ('\u{226A}', '\u{226B}'),
+    ('\u{2308}', '\u{2309}'),
+    ('\u{230A}', '\u{230B}'),
+    ('\u{2329}', '\u{232A}'),
+    ('\u{3008}', '\u{3009}'),
+    ('\u{300A}', '\u{300B}'),
+    ('\u{300C}', '\u{300D}'),
+    ('\u{300E}', '\u{300F}'),
+    ('\u{3010}', '\u{3011}'),
+    ('\u{3014}', '\u{3015}'),
+    ('\u{3016}', '\u{3017}'),
+];
+
+pub fn mirror(c: char) -> char {
+    for (open, close) in MIRRORED {
+        if c == open {
+            return close;
+        }
+        if c == close {
+            return open;
+        }
+    }
+    c
+}
+
 pub fn reverse_visual(text: &str) -> String {
     let mut clusters: Vec<String> = Vec::new();
     for c in text.chars() {
@@ -228,5 +265,6 @@ pub fn reverse_visual(text: &str) -> String {
         .iter()
         .rev()
         .flat_map(|cluster| cluster.chars())
+        .map(mirror)
         .collect()
 }

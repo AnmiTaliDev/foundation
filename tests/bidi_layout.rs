@@ -164,3 +164,34 @@ fn mixed_words_stay_on_one_line_when_possible() {
     let texts: Vec<&str> = found[0].iter().map(|(_, t)| t.as_str()).collect();
     assert_eq!(texts, vec!["ab", HEBREW_VISUAL, "cd"]);
 }
+
+#[test]
+fn brackets_around_right_to_left_text_are_mirrored() {
+    let body = format!("({})", HEBREW);
+    assert_eq!(
+        visual("direction: rtl", &body),
+        vec![format!("({})", HEBREW_VISUAL)]
+    );
+}
+
+#[test]
+fn brackets_in_left_to_right_paragraphs_keep_their_glyphs() {
+    let body = format!("({})", HEBREW);
+    assert_eq!(visual("", &body), vec!["(", HEBREW_VISUAL, ")"]);
+}
+
+#[test]
+fn angle_quotes_mirror_in_right_to_left_text() {
+    let body = format!("\u{00AB}{}\u{00BB}", HEBREW);
+    assert_eq!(
+        visual("direction: rtl", &body),
+        vec![format!("\u{00AB}{}\u{00BB}", HEBREW_VISUAL)]
+    );
+}
+
+#[test]
+fn latin_text_inside_brackets_in_right_to_left_paragraphs() {
+    let body = format!("{} (abc)", HEBREW);
+    let result = visual("direction: rtl", &body);
+    assert_eq!(result, vec!["(", "abc", ")", HEBREW_VISUAL]);
+}
