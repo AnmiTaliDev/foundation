@@ -14,6 +14,7 @@ pub struct Scrollbars {
     pub max: (f32, f32),
     pub show: (bool, bool),
     pub width: f32,
+    pub rtl: bool,
     pub thumb: Color,
     pub track: Color,
 }
@@ -37,7 +38,11 @@ impl Scrollbars {
         let mut bars = Vec::new();
         if self.show.1 {
             let track = Rect {
-                x: area.x + area.width - self.width,
+                x: if self.rtl {
+                    area.x
+                } else {
+                    area.x + area.width - self.width
+                },
                 y: area.y,
                 width: self.width,
                 height: (area.height - corner).max(0.0),
@@ -46,7 +51,7 @@ impl Scrollbars {
         }
         if self.show.0 {
             let track = Rect {
-                x: area.x,
+                x: if self.rtl { area.x + corner } else { area.x },
                 y: area.y + area.height - self.width,
                 width: (area.width - corner).max(0.0),
                 height: self.width,
@@ -249,6 +254,7 @@ impl LayoutBox<'_> {
                 snap,
                 points,
             });
+            let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
             self.scrollbars = Some(Scrollbars {
                 offset,
                 max,
@@ -257,6 +263,7 @@ impl LayoutBox<'_> {
                     bar_width > 0.0 && axes.1 && (always.1 || max.1 > 0.0),
                 ),
                 width: bar_width,
+                rtl,
                 thumb: colors.0,
                 track: colors.1,
             });
