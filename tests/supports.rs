@@ -112,3 +112,13 @@ fn scroll_snap_properties_are_supported() {
         "(scroll-snap-type: sideways)"
     ));
 }
+
+#[test]
+fn scroll_spacing_properties_are_supported() {
+    assert!(foundation::supports::evaluate("(scroll-padding: 10px)"));
+    assert!(foundation::supports::evaluate("(scroll-margin: 1px 2px)"));
+    assert!(foundation::supports::evaluate("(scroll-padding-left: 5px)"));
+    assert!(!foundation::supports::evaluate(
+        "(scroll-padding: 1px 2px 3px 4px 5px)"
+    ));
+}
