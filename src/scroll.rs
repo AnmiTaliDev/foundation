@@ -217,7 +217,17 @@ impl LayoutBox<'_> {
             let mut points = (Vec::new(), Vec::new());
             if snap.0.is_some() || snap.1.is_some() {
                 let mut found = (Vec::new(), Vec::new());
-                self.collect_snap_points(padding, max, &mut found);
+                let spacing = match self.kind {
+                    BoxKind::Block(style) => style.scroll_padding((padding.width, padding.height)),
+                    BoxKind::Anonymous(_) => [0.0; 4],
+                };
+                let port = Rect {
+                    x: padding.x + spacing[3],
+                    y: padding.y + spacing[0],
+                    width: padding.width - spacing[1] - spacing[3],
+                    height: padding.height - spacing[0] - spacing[2],
+                };
+                self.collect_snap_points(port, max, &mut found);
                 points = (
                     if snap.0.is_some() {
                         sorted(found.0)
@@ -274,7 +284,14 @@ impl LayoutBox<'_> {
                 continue;
             };
             let (align_x, align_y) = style.scroll_snap_align();
-            let area = child.dimensions.border_box();
+            let margin = style.scroll_margin();
+            let border = child.dimensions.border_box();
+            let area = Rect {
+                x: border.x - margin[3],
+                y: border.y - margin[0],
+                width: border.width + margin[1] + margin[3],
+                height: border.height + margin[0] + margin[2],
+            };
             let always = style.scroll_snap_stop_always();
             let x = snap_position(align_x, (area.x, area.width), (port.x, port.width), max.0);
             let y = snap_position(align_y, (area.y, area.height), (port.y, port.height), max.1);
