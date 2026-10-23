@@ -586,6 +586,9 @@ impl<'a> LayoutBox<'a> {
                     self.layout_table_children(style, fonts, images);
                 } else if style.display() == Display::Grid {
                     self.layout_grid_children(style, fonts, images);
+                    if style.rtl() {
+                        self.mirror_children();
+                    }
                 } else if self.is_formatting_root(style) {
                     let mut own = FloatContext::default();
                     self.layout_children(fonts, images, &mut own);
