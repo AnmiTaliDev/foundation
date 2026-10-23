@@ -166,6 +166,7 @@ struct Flow<'a> {
     vertical: VerticalAlign,
     indent: Indent,
     ellipsis: bool,
+    rtl: bool,
 }
 
 fn list_start(style: &StyledNode) -> i32 {
@@ -191,6 +192,7 @@ fn build_block_box<'a>(style: &'a StyledNode<'a>, images: &ImageMap) -> LayoutBo
         vertical: VerticalAlign::Raise(0.0),
         indent: style.text_indent(),
         ellipsis: style.ellipsis(),
+        rtl: style.rtl(),
     };
     let align = style.text_align();
     let blockify = matches!(style.display(), Display::Flex | Display::Grid);
@@ -438,6 +440,7 @@ fn flush_items(align: TextAlign, flow: &mut Flow) {
                     Indent::default()
                 },
                 ellipsis: flow.ellipsis,
+                rtl: flow.rtl,
             }),
             Vec::new(),
         ));
@@ -641,6 +644,7 @@ impl<'a> LayoutBox<'a> {
                                     align: TextAlign::Left,
                                     indent: Indent::default(),
                                     ellipsis: false,
+                                    rtl: false,
                                 }),
                                 Vec::new(),
                             ),

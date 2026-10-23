@@ -117,6 +117,7 @@ pub struct InlineContent<'a> {
     pub align: TextAlign,
     pub indent: Indent,
     pub ellipsis: bool,
+    pub rtl: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -559,7 +560,9 @@ pub fn layout_lines(
                 if word_width <= right - left || !floats.is_blocked_at(y) {
                     area.origin_x = left;
                     area.width = right - left;
-                    area.origin_x += indent;
+                    if !content.rtl {
+                        area.origin_x += indent;
+                    }
                     area.width -= indent;
                     indent = 0.0;
                     break;
@@ -591,7 +594,12 @@ fn end_line(
     lines: &mut Lines,
 ) -> f32 {
     let start = lines.fragments.len();
-    let height = finish_line(line, content.align, justify, area, top, fonts, lines);
+    let align = if content.rtl && content.align == TextAlign::Justify && !justify {
+        TextAlign::Right
+    } else {
+        content.align
+    };
+    let height = finish_line(line, align, justify, area, top, fonts, lines);
     if content.ellipsis {
         ellipsize(
             &mut lines.fragments,
