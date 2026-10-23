@@ -24,6 +24,7 @@ pub mod loader;
 pub mod location;
 pub mod logical;
 pub mod media;
+pub mod mirror;
 pub mod page;
 pub mod paint;
 pub mod picture;

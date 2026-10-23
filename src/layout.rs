@@ -579,6 +579,9 @@ impl<'a> LayoutBox<'a> {
                 self.calculate_position(style, containing);
                 if style.display() == Display::Flex {
                     self.layout_flex_children(style, fonts, images);
+                    if style.rtl() {
+                        self.mirror_children();
+                    }
                 } else if table {
                     self.layout_table_children(style, fonts, images);
                 } else if style.display() == Display::Grid {
