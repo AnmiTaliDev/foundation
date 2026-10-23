@@ -54,6 +54,76 @@ impl Plan {
     }
 }
 
+const CELL: u8 = 5;
+const ROW: u8 = 4;
+const ROW_GROUP: u8 = 3;
+const COLUMN: u8 = 2;
+const COLUMN_GROUP: u8 = 1;
+
+struct ColumnSource<'s> {
+    col: Option<&'s StyledNode<'s>>,
+    group: Option<&'s StyledNode<'s>>,
+    group_first: bool,
+    group_last: bool,
+}
+
+fn column_sources<'s>(table: &'s StyledNode<'s>) -> Vec<ColumnSource<'s>> {
+    let mut sources = Vec::new();
+    for child in &table.children {
+        let Content::Element(element) = child.content else {
+            continue;
+        };
+        match element.tag_name.as_str() {
+            "col" => {
+                for _ in 0..span_attribute(element, "span") {
+                    sources.push(ColumnSource {
+                        col: Some(child),
+                        group: None,
+                        group_first: false,
+                        group_last: false,
+                    });
+                }
+            }
+            "colgroup" => {
+                let start = sources.len();
+                for column in &child.children {
+                    let Content::Element(col) = column.content else {
+                        continue;
+                    };
+                    if col.tag_name == "col" {
+                        for _ in 0..span_attribute(col, "span") {
+                            sources.push(ColumnSource {
+                                col: Some(column),
+                                group: Some(child),
+                                group_first: false,
+                                group_last: false,
+                            });
+                        }
+                    }
+                }
+                if sources.len() == start {
+                    for _ in 0..span_attribute(element, "span") {
+                        sources.push(ColumnSource {
+                            col: None,
+                            group: Some(child),
+                            group_first: false,
+                            group_last: false,
+                        });
+                    }
+                }
+                if sources.len() > start {
+                    sources[start].group_first = true;
+                    let last = sources.len() - 1;
+                    sources[last].group_last = true;
+                }
+            }
+            _ => {}
+        }
+        sources.truncate(MAX_SPAN);
+    }
+    sources
+}
+
 const BORDER_WIDTHS: [&str; 4] = [
     "border-top-width",
     "border-right-width",
@@ -412,39 +482,145 @@ impl<'a> LayoutBox<'a> {
             table.px("border-bottom-width", 0.0) > 0.0,
             table.px("border-left-width", 0.0) > 0.0,
         ];
-        let edge_of = |cell: &Cell, side: usize| match &self.cell_box(cell).kind {
-            BoxKind::Block(style) => style.border_edge(side),
-            BoxKind::Anonymous(_) => Edge::NONE,
+        let columns = column_sources(table);
+        let rows = grid.rows.len();
+        let cell_style = |cell: &Cell| match &self.cell_box(cell).kind {
+            BoxKind::Block(style) => Some(*style),
+            BoxKind::Anonymous(_) => None,
+        };
+        let row_style = |row: usize| match &self.row_box(&grid.rows[row]).kind {
+            BoxKind::Block(style) => Some(*style),
+            BoxKind::Anonymous(_) => None,
+        };
+        let group_style = |row: usize| {
+            let group = grid.rows[row].group?;
+            match &self.children[group].kind {
+                BoxKind::Block(style) => Some(*style),
+                BoxKind::Anonymous(_) => None,
+            }
+        };
+        let first_in_group =
+            |row: usize| row == 0 || grid.rows[row - 1].group != grid.rows[row].group;
+        let last_in_group =
+            |row: usize| row + 1 == rows || grid.rows[row + 1].group != grid.rows[row].group;
+        let edge = |style: Option<&StyledNode>, side: usize, priority: u8| {
+            style.map(|style| style.border_edge(side).from_source(priority))
         };
         grid.cells
             .iter()
             .map(|cell| {
+                let own = cell_style(cell);
+                let first_row = cell.row;
+                let last_row = cell.row + cell.rows - 1;
+                let first_column = cell.column;
+                let end_column = cell.column + cell.columns;
                 let mut edges = [None; 4];
-                let right = grid.cells.iter().find(|other| {
-                    other.column == cell.column + cell.columns
-                        && other.row <= cell.row
-                        && cell.row < other.row + other.rows
-                });
-                if let Some(other) = right {
-                    edges[1] = Some(Edge::resolve(edge_of(cell, 1), edge_of(other, 3)));
+
+                let mut right = vec![edge(own, 1, CELL)];
+                if end_column < grid.columns {
+                    let next = grid.cells.iter().find(|other| {
+                        other.column == end_column
+                            && other.row <= first_row
+                            && first_row < other.row + other.rows
+                    });
+                    right.push(next.and_then(|other| edge(cell_style(other), 3, CELL)));
+                    let before = &columns.get(end_column - 1);
+                    right.push(before.and_then(|source| edge(source.col, 1, COLUMN)));
+                    right.push(
+                        before
+                            .filter(|source| source.group_last)
+                            .and_then(|source| edge(source.group, 1, COLUMN_GROUP)),
+                    );
+                    let after = &columns.get(end_column);
+                    right.push(after.and_then(|source| edge(source.col, 3, COLUMN)));
+                    right.push(
+                        after
+                            .filter(|source| source.group_first)
+                            .and_then(|source| edge(source.group, 3, COLUMN_GROUP)),
+                    );
+                } else {
+                    right.push(edge(row_style(first_row), 1, ROW));
+                    right.push(edge(group_style(first_row), 1, ROW_GROUP));
+                    let last = &columns.get(end_column - 1);
+                    right.push(last.and_then(|source| edge(source.col, 1, COLUMN)));
+                    right.push(
+                        last.filter(|source| source.group_last)
+                            .and_then(|source| edge(source.group, 1, COLUMN_GROUP)),
+                    );
                 }
-                let below = grid.cells.iter().find(|other| {
-                    other.row == cell.row + cell.rows
-                        && other.column <= cell.column
-                        && cell.column < other.column + other.columns
-                });
-                if let Some(other) = below {
-                    edges[2] = Some(Edge::resolve(edge_of(cell, 2), edge_of(other, 0)));
+                edges[1] = Some(Edge::resolve_all(
+                    &right.into_iter().flatten().collect::<Vec<_>>(),
+                ));
+
+                let mut bottom = vec![
+                    edge(own, 2, CELL),
+                    edge(row_style(last_row), 2, ROW),
+                    if last_in_group(last_row) {
+                        edge(group_style(last_row), 2, ROW_GROUP)
+                    } else {
+                        None
+                    },
+                ];
+                if last_row + 1 < rows {
+                    let below = grid.cells.iter().find(|other| {
+                        other.row == last_row + 1
+                            && other.column <= first_column
+                            && first_column < other.column + other.columns
+                    });
+                    bottom.push(below.and_then(|other| edge(cell_style(other), 0, CELL)));
+                    bottom.push(edge(row_style(last_row + 1), 0, ROW));
+                    if first_in_group(last_row + 1) {
+                        bottom.push(edge(group_style(last_row + 1), 0, ROW_GROUP));
+                    }
+                } else if let Some(source) = columns.get(first_column) {
+                    bottom.push(edge(source.col, 2, COLUMN));
+                    bottom.push(edge(source.group, 2, COLUMN_GROUP));
                 }
-                Plan {
-                    suppressed: [
-                        cell.row > 0 || table_borders[0],
-                        table_borders[1],
-                        table_borders[2],
-                        cell.column > 0 || table_borders[3],
-                    ],
-                    edges,
+                edges[2] = Some(Edge::resolve_all(
+                    &bottom.into_iter().flatten().collect::<Vec<_>>(),
+                ));
+
+                if first_row == 0 {
+                    let mut top = vec![
+                        edge(own, 0, CELL),
+                        edge(row_style(0), 0, ROW),
+                        edge(group_style(0), 0, ROW_GROUP),
+                    ];
+                    if let Some(source) = columns.get(first_column) {
+                        top.push(edge(source.col, 0, COLUMN));
+                        top.push(edge(source.group, 0, COLUMN_GROUP));
+                    }
+                    edges[0] = Some(Edge::resolve_all(
+                        &top.into_iter().flatten().collect::<Vec<_>>(),
+                    ));
                 }
+                if first_column == 0 {
+                    let mut left = vec![
+                        edge(own, 3, CELL),
+                        edge(row_style(first_row), 3, ROW),
+                        edge(group_style(first_row), 3, ROW_GROUP),
+                    ];
+                    if let Some(source) = columns.first() {
+                        left.push(edge(source.col, 3, COLUMN));
+                        left.push(edge(source.group, 3, COLUMN_GROUP));
+                    }
+                    edges[3] = Some(Edge::resolve_all(
+                        &left.into_iter().flatten().collect::<Vec<_>>(),
+                    ));
+                }
+
+                let suppressed = [
+                    cell.row > 0 || table_borders[0],
+                    table_borders[1],
+                    table_borders[2],
+                    cell.column > 0 || table_borders[3],
+                ];
+                for side in 0..4 {
+                    if suppressed[side] {
+                        edges[side] = None;
+                    }
+                }
+                Plan { suppressed, edges }
             })
             .collect()
     }
