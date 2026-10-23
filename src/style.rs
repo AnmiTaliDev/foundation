@@ -18,6 +18,7 @@ use crate::layout::Rect;
 use crate::radius::Radii;
 use crate::selector::{self, PseudoElement, Scope};
 use crate::shadow::Shadow;
+use crate::snap::{SnapAlign, Strictness};
 use crate::transform::{self, Matrix};
 
 pub const USER_AGENT_STYLESHEET: &str =
@@ -1337,6 +1338,37 @@ impl<'a> StyledNode<'a> {
             self.color("scrollbar-track-color")
                 .unwrap_or(SCROLLBAR_TRACK),
         )
+    }
+
+    pub fn scroll_snap_type(&self) -> (Option<Strictness>, Option<Strictness>) {
+        let Some(text) = self.keyword("scroll-snap-type") else {
+            return (None, None);
+        };
+        let mut parts = text.split_whitespace();
+        let strictness = match parts.nth(1) {
+            Some("mandatory") => Strictness::Mandatory,
+            _ => Strictness::Proximity,
+        };
+        match text.split_whitespace().next() {
+            Some("x") => (Some(strictness), None),
+            Some("y") => (None, Some(strictness)),
+            Some("both") => (Some(strictness), Some(strictness)),
+            _ => (None, None),
+        }
+    }
+
+    pub fn scroll_snap_align(&self) -> (SnapAlign, SnapAlign) {
+        let Some(text) = self.keyword("scroll-snap-align") else {
+            return (SnapAlign::None, SnapAlign::None);
+        };
+        let mut parts = text.split_whitespace();
+        let block = parts.next().map_or(SnapAlign::None, SnapAlign::parse);
+        let inline = parts.next().map_or(SnapAlign::None, SnapAlign::parse);
+        (inline, block)
+    }
+
+    pub fn scroll_snap_stop_always(&self) -> bool {
+        self.keyword("scroll-snap-stop") == Some("always")
     }
 
     pub fn scrollbar_width(&self) -> f32 {

@@ -988,6 +988,59 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             _ => Vec::new(),
         };
     }
+    if name == "scroll-snap-type" {
+        let tokens: Vec<String> = split_values(value)
+            .into_iter()
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let axis = |token: &str| match token {
+            "none" => Some("none"),
+            "x" | "inline" => Some("x"),
+            "y" | "block" => Some("y"),
+            "both" => Some("both"),
+            _ => None,
+        };
+        let strictness = |token: &str| matches!(token, "mandatory" | "proximity");
+        let text = match tokens.as_slice() {
+            [one] if one == "none" => Some("none".to_string()),
+            [one] => axis(one).map(|axis| format!("{} proximity", axis)),
+            [first, second] if strictness(second) => {
+                axis(first).map(|axis| format!("{} {}", axis, second))
+            }
+            _ => None,
+        };
+        return text
+            .map(|text| vec![declaration(&name, Value::Keyword(text))])
+            .unwrap_or_default();
+    }
+    if name == "scroll-snap-align" {
+        let tokens: Vec<String> = split_values(value)
+            .into_iter()
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let valid = |token: &String| matches!(token.as_str(), "none" | "start" | "end" | "center");
+        let text = match tokens.as_slice() {
+            [one] if valid(one) => Some(format!("{} {}", one, one)),
+            [block, inline] if valid(block) && valid(inline) => {
+                Some(format!("{} {}", block, inline))
+            }
+            _ => None,
+        };
+        return text
+            .map(|text| vec![declaration(&name, Value::Keyword(text))])
+            .unwrap_or_default();
+    }
+    if name == "scroll-snap-stop" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword)) if matches!(keyword.as_str(), "normal" | "always") => {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
     if name == "scrollbar-color" {
         let tokens = split_values(value);
         let colors: Vec<Value> = match tokens.as_slice() {
