@@ -267,7 +267,8 @@ impl LayoutBox<'_> {
                     width: padding.width - spacing[1] - spacing[3],
                     height: padding.height - spacing[0] - spacing[2],
                 };
-                self.collect_snap_points(port, max, &mut found);
+                let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
+                self.collect_snap_points(port, max, rtl, &mut found);
                 points = (
                     if snap.0.is_some() {
                         sorted(found.0)
@@ -320,22 +321,26 @@ impl LayoutBox<'_> {
         &self,
         port: Rect,
         max: (f32, f32),
+        rtl: bool,
         found: &mut (Vec<SnapPoint>, Vec<SnapPoint>),
     ) {
         for child in &self.children {
             let BoxKind::Block(style) = child.kind else {
-                child.collect_snap_points(port, max, found);
+                child.collect_snap_points(port, max, rtl, found);
                 continue;
             };
             let (align_x, align_y) = style.scroll_snap_align();
             let margin = style.scroll_margin();
             let border = child.dimensions.border_box();
-            let area = Rect {
+            let mut area = Rect {
                 x: border.x - margin[3],
                 y: border.y - margin[0],
                 width: border.width + margin[1] + margin[3],
                 height: border.height + margin[0] + margin[2],
             };
+            if rtl {
+                area.x = 2.0 * port.x + port.width - area.x - area.width;
+            }
             let always = style.scroll_snap_stop_always();
             let x = snap_position(align_x, (area.x, area.width), (port.x, port.width), max.0);
             let y = snap_position(align_y, (area.y, area.height), (port.y, port.height), max.1);
@@ -346,7 +351,7 @@ impl LayoutBox<'_> {
                 .1
                 .extend(y.map(|position| SnapPoint { position, always }));
             if child.scroll_axes().is_none() {
-                child.collect_snap_points(port, max, found);
+                child.collect_snap_points(port, max, rtl, found);
             }
         }
     }
