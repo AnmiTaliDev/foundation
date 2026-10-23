@@ -659,6 +659,32 @@ impl<'a> LayoutBox<'a> {
         own.or_else(|| self.children.iter().find_map(LayoutBox::first_baseline))
     }
 
+    fn collapsed_columns(&self, grid: &Grid) -> Vec<bool> {
+        let mut hidden = vec![false; grid.columns];
+        if let BoxKind::Block(table) = &self.kind {
+            let sources = column_sources(table);
+            for (column, source) in sources.iter().enumerate().take(grid.columns) {
+                hidden[column] = source.col.is_some_and(StyledNode::collapsed)
+                    || source.group.is_some_and(StyledNode::collapsed);
+            }
+        }
+        hidden
+    }
+
+    fn collapsed_rows(&self, grid: &Grid) -> Vec<bool> {
+        grid.rows
+            .iter()
+            .map(|row| {
+                let own =
+                    matches!(&self.row_box(row).kind, BoxKind::Block(style) if style.collapsed());
+                let group = row.group.is_some_and(|group| {
+                    matches!(&self.children[group].kind, BoxKind::Block(style) if style.collapsed())
+                });
+                own || group
+            })
+            .collect()
+    }
+
     fn caption_width(&self, mode: Intrinsic, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         self.children
             .iter()
@@ -726,6 +752,12 @@ impl<'a> LayoutBox<'a> {
                 }
             }
         }
+        for (column, hidden) in self.collapsed_columns(grid).into_iter().enumerate() {
+            if hidden {
+                minimum[column] = 0.0;
+                maximum[column] = 0.0;
+            }
+        }
         for (low, high) in minimum.iter().zip(maximum.iter_mut()) {
             *high = high.max(*low);
         }
@@ -752,7 +784,12 @@ impl<'a> LayoutBox<'a> {
             Intrinsic::Min => minimum,
             Intrinsic::Max => maximum,
         };
-        (widths.iter().sum::<f32>() + gaps.x * (grid.columns + 1) as f32).max(caption)
+        let live = self
+            .collapsed_columns(&grid)
+            .iter()
+            .filter(|hidden| !**hidden)
+            .count();
+        (widths.iter().sum::<f32>() + gaps.x * (live + 1) as f32).max(caption)
     }
 
     pub(crate) fn table_width(
@@ -807,9 +844,15 @@ impl<'a> LayoutBox<'a> {
             return;
         }
         let plans = self.collapse_plan(&grid, style);
-        let columns = grid.columns.max(1);
+        let column_hidden = self.collapsed_columns(&grid);
+        let row_hidden = self.collapsed_rows(&grid);
+        let columns = column_hidden
+            .iter()
+            .filter(|hidden| !**hidden)
+            .count()
+            .max(1);
         let available = (width - gaps.x * (columns + 1) as f32).max(0.0);
-        let widths = if style.table_layout_fixed() {
+        let mut widths = if style.table_layout_fixed() {
             self.fixed_widths(&grid, style, width, available, gaps.x)
         } else {
             let (minimum, maximum) =
@@ -844,13 +887,28 @@ impl<'a> LayoutBox<'a> {
             }
             widths
         };
+        for (column_width, hidden) in widths.iter_mut().zip(&column_hidden) {
+            if *hidden {
+                *column_width = 0.0;
+            }
+        }
         let mut column_x = Vec::with_capacity(widths.len());
         let mut x = left + gaps.x;
-        for column_width in &widths {
+        for (column_width, hidden) in widths.iter().zip(&column_hidden) {
             column_x.push(x);
-            x += column_width + gaps.x;
+            if !hidden {
+                x += column_width + gaps.x;
+            }
         }
-        let rows_width = x - gaps.x - (left + gaps.x);
+        let rows_width = (x - gaps.x - (left + gaps.x)).max(0.0);
+        let cell_hidden = |cell: &Cell| {
+            row_hidden[cell.row..cell.row + cell.rows]
+                .iter()
+                .all(|h| *h)
+                || column_hidden[cell.column..cell.column + cell.columns]
+                    .iter()
+                    .all(|h| *h)
+        };
 
         let row_count = grid.rows.len();
         let mut row_heights = vec![0.0f32; row_count];
@@ -870,8 +928,12 @@ impl<'a> LayoutBox<'a> {
         let mut minimum_heights = Vec::with_capacity(grid.cells.len());
         for (index, (cell, plan)) in grid.cells.iter().zip(&plans).enumerate() {
             let column_end = cell.column + cell.columns;
+            let live_columns = column_hidden[cell.column..column_end]
+                .iter()
+                .filter(|hidden| !**hidden)
+                .count();
             let cell_width: f32 = widths[cell.column..column_end].iter().sum::<f32>()
-                + gaps.x * (cell.columns - 1) as f32;
+                + gaps.x * live_columns.saturating_sub(1) as f32;
             let cell_box = self.cell_box_mut(cell);
             cell_box.reset();
             cell_box.collapsed_borders = plan.edges;
@@ -915,15 +977,15 @@ impl<'a> LayoutBox<'a> {
         }
 
         for ((cell, height), minimum) in grid.cells.iter().zip(&natural).zip(&minimum_heights) {
-            if cell.rows == 1 {
+            if cell.rows == 1 && !cell_hidden(cell) {
                 row_heights[cell.row] = row_heights[cell.row].max(height.max(*minimum));
             }
         }
         let mut row_baseline = vec![0.0f32; row_count];
         let mut row_below = vec![0.0f32; row_count];
         for ((cell, height), baseline) in grid.cells.iter().zip(&natural).zip(&baselines) {
-            if let Some(baseline) = baseline {
-                row_baseline[cell.row] = row_baseline[cell.row].max(*baseline);
+            if let Some(baseline) = baseline.filter(|_| !cell_hidden(cell)) {
+                row_baseline[cell.row] = row_baseline[cell.row].max(baseline);
                 row_below[cell.row] = row_below[cell.row].max(height - baseline);
             }
         }
@@ -933,32 +995,45 @@ impl<'a> LayoutBox<'a> {
         {
             *row_height = row_height.max(above + below);
         }
+        for (row_height, hidden) in row_heights.iter_mut().zip(&row_hidden) {
+            if *hidden {
+                *row_height = 0.0;
+            }
+        }
         for (cell, height) in grid.cells.iter().zip(&natural) {
-            if cell.rows == 1 {
+            if cell.rows == 1 || cell_hidden(cell) {
                 continue;
             }
-            let span = cell.row..cell.row + cell.rows;
-            let current: f32 =
-                row_heights[span.clone()].iter().sum::<f32>() + gaps.y * (cell.rows - 1) as f32;
+            let live: Vec<usize> = (cell.row..cell.row + cell.rows)
+                .filter(|row| !row_hidden[*row])
+                .collect();
+            let current: f32 = live.iter().map(|row| row_heights[*row]).sum::<f32>()
+                + gaps.y * (live.len() - 1) as f32;
             if *height > current {
-                let extra = (height - current) / cell.rows as f32;
-                for row_height in &mut row_heights[span] {
-                    *row_height += extra;
+                let extra = (height - current) / live.len() as f32;
+                for row in live {
+                    row_heights[row] += extra;
                 }
             }
         }
 
         let mut row_y = Vec::with_capacity(row_count);
         let mut y = top + cursor + gaps.y;
-        for row_height in &row_heights {
+        for (row_height, hidden) in row_heights.iter().zip(&row_hidden) {
             row_y.push(y);
-            y += row_height + gaps.y;
+            if !hidden {
+                y += row_height + gaps.y;
+            }
         }
 
         for (index, (cell, natural_height)) in grid.cells.iter().zip(&natural).enumerate() {
             let row_end = cell.row + cell.rows;
+            let live_rows = row_hidden[cell.row..row_end]
+                .iter()
+                .filter(|hidden| !**hidden)
+                .count();
             let target: f32 = row_heights[cell.row..row_end].iter().sum::<f32>()
-                + gaps.y * (cell.rows - 1) as f32;
+                + gaps.y * live_rows.saturating_sub(1) as f32;
             let destination = (column_x[cell.column], row_y[cell.row]);
             let cell_box = self.cell_box_mut(cell);
             if matches!(cell_box.kind, BoxKind::Anonymous(_)) {
@@ -981,6 +1056,14 @@ impl<'a> LayoutBox<'a> {
             d.content.height = (target - chrome).max(0.0);
             let border_box = cell_box.dimensions.border_box();
             cell_box.translate(destination.0 - border_box.x, destination.1 - border_box.y);
+            if cell_hidden(cell) {
+                cell_box.collapsed = true;
+                cell_box.children.clear();
+                cell_box.fragments.clear();
+                cell_box.images.clear();
+                cell_box.inline_boxes.clear();
+                cell_box.rules.clear();
+            }
         }
 
         for (index, row) in grid.rows.iter().enumerate() {

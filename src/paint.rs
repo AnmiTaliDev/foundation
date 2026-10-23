@@ -644,7 +644,7 @@ fn emit(list: &mut DisplayList, fixed: bool, commands: Vec<DisplayCommand>) {
 }
 
 fn is_hidden(layout_box: &LayoutBox) -> bool {
-    matches!(layout_box.kind, BoxKind::Block(style) if !style.visible())
+    layout_box.collapsed || matches!(layout_box.kind, BoxKind::Block(style) if !style.visible())
 }
 
 fn decoration_commands(layout_box: &LayoutBox, view: View) -> Vec<DisplayCommand> {

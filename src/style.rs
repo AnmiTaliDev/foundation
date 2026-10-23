@@ -1644,6 +1644,10 @@ impl<'a> StyledNode<'a> {
         self.rgba("color").map_or(255, |rgba| rgba.alpha)
     }
 
+    pub fn collapsed(&self) -> bool {
+        self.keyword("visibility") == Some("collapse")
+    }
+
     pub fn visible(&self) -> bool {
         !matches!(self.keyword("visibility"), Some("hidden" | "collapse"))
     }
