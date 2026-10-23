@@ -94,3 +94,9 @@ fn scrollbar_properties_are_supported() {
     assert!(!foundation::supports::evaluate("(scrollbar-color: red)"));
     assert!(!foundation::supports::evaluate("(scrollbar-width: wide)"));
 }
+
+#[test]
+fn visibility_is_supported() {
+    assert!(foundation::supports::evaluate("(visibility: hidden)"));
+    assert!(foundation::supports::evaluate("(visibility: collapse)"));
+}
