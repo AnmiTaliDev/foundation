@@ -145,7 +145,9 @@ const SCROLL_MARGIN_PROPERTIES: [&str; 4] = [
     "scroll-margin-left",
 ];
 
-const BOX_SHORTHANDS: [(&str, [&str; 4]); 7] = [
+const INSET_PROPERTIES: [&str; 4] = ["top", "right", "bottom", "left"];
+
+const BOX_SHORTHANDS: [(&str, [&str; 4]); 8] = [
     ("margin", MARGIN_PROPERTIES),
     ("padding", PADDING_PROPERTIES),
     ("border-width", BORDER_WIDTH_PROPERTIES),
@@ -153,6 +155,7 @@ const BOX_SHORTHANDS: [(&str, [&str; 4]); 7] = [
     ("border-color", BORDER_COLOR_PROPERTIES),
     ("scroll-padding", SCROLL_PADDING_PROPERTIES),
     ("scroll-margin", SCROLL_MARGIN_PROPERTIES),
+    ("inset", INSET_PROPERTIES),
 ];
 
 const FONT_SIZE_KEYWORDS: [(&str, f32); 7] = [
