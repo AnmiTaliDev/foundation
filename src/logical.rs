@@ -110,17 +110,95 @@ const COLOR_PAIRS: [(&str, [&str; 2]); 2] = [
     ),
 ];
 
+const INLINE: [(&str, &str, &str, &str); 8] = [
+    (
+        "margin-inline-start",
+        "margin-left",
+        "margin-inline-end",
+        "margin-right",
+    ),
+    (
+        "padding-inline-start",
+        "padding-left",
+        "padding-inline-end",
+        "padding-right",
+    ),
+    (
+        "scroll-margin-inline-start",
+        "scroll-margin-left",
+        "scroll-margin-inline-end",
+        "scroll-margin-right",
+    ),
+    (
+        "scroll-padding-inline-start",
+        "scroll-padding-left",
+        "scroll-padding-inline-end",
+        "scroll-padding-right",
+    ),
+    (
+        "border-inline-start-width",
+        "border-left-width",
+        "border-inline-end-width",
+        "border-right-width",
+    ),
+    (
+        "border-inline-start-style",
+        "border-left-style",
+        "border-inline-end-style",
+        "border-right-style",
+    ),
+    (
+        "border-inline-start-color",
+        "border-left-color",
+        "border-inline-end-color",
+        "border-right-color",
+    ),
+    ("inset-inline-start", "left", "inset-inline-end", "right"),
+];
+
+pub(crate) fn physical(name: &str, rtl: bool) -> &str {
+    for (start, left, end, right) in INLINE {
+        if name == start {
+            return if rtl { right } else { left };
+        }
+        if name == end {
+            return if rtl { left } else { right };
+        }
+    }
+    name
+}
+
+fn relabel(declarations: Vec<Declaration>, start: bool) -> Vec<Declaration> {
+    declarations
+        .into_iter()
+        .map(|mut declaration| {
+            for (logical_start, left, logical_end, right) in INLINE {
+                if start && declaration.name == left {
+                    declaration.name = logical_start.to_string();
+                    break;
+                }
+                if !start && declaration.name == right {
+                    declaration.name = logical_end.to_string();
+                    break;
+                }
+            }
+            declaration
+        })
+        .collect()
+}
+
 pub(crate) fn expand(name: &str, value: &str) -> Option<Vec<Declaration>> {
-    if let Some((_, physical)) = SINGLE.iter().find(|(logical, _)| *logical == name) {
-        return Some(parse_declaration(&format!("{}: {}", physical, value)));
+    if let Some((_, target)) = SINGLE.iter().find(|(logical, _)| *logical == name) {
+        let declarations = parse_declaration(&format!("{}: {}", target, value));
+        return Some(relabel(declarations, !name.contains("inline-end")));
     }
     if let Some((_, sides)) = SHARED.iter().find(|(logical, _)| *logical == name) {
-        return Some(
-            sides
-                .iter()
-                .flat_map(|side| parse_declaration(&format!("{}: {}", side, value)))
-                .collect(),
+        let start = relabel(parse_declaration(&format!("{}: {}", sides[0], value)), true);
+        let end = relabel(
+            parse_declaration(&format!("{}: {}", sides[1], value)),
+            false,
         );
+        return Some(start.into_iter().chain(end).collect());
     }
     let sides = PAIRS
         .iter()
@@ -133,13 +211,15 @@ pub(crate) fn expand(name: &str, value: &str) -> Option<Vec<Declaration>> {
         [start, end] => [*start, *end],
         _ => return Some(Vec::new()),
     };
-    let declarations: Vec<Vec<Declaration>> = sides
-        .iter()
-        .zip(values)
-        .map(|(side, token)| parse_declaration(&format!("{}: {}", side, token)))
-        .collect();
-    if declarations.iter().any(Vec::is_empty) {
+    let start = parse_declaration(&format!("{}: {}", sides[0], values[0]));
+    let end = parse_declaration(&format!("{}: {}", sides[1], values[1]));
+    if start.is_empty() || end.is_empty() {
         return Some(Vec::new());
     }
-    Some(declarations.into_iter().flatten().collect())
+    Some(
+        relabel(start, true)
+            .into_iter()
+            .chain(relabel(end, false))
+            .collect(),
+    )
 }

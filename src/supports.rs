@@ -203,7 +203,7 @@ fn supports_declaration(text: &str) -> bool {
         return false;
     }
     declarations.iter().all(|declaration| {
-        if !PROPERTIES.contains(&declaration.name.as_str()) {
+        if !PROPERTIES.contains(&crate::logical::physical(&declaration.name, false)) {
             return false;
         }
         let allowed: &[&str] = match declaration.name.as_str() {

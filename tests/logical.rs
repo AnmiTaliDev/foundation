@@ -36,18 +36,18 @@ fn render(style: &str) -> foundation::paint::Canvas {
 }
 
 #[test]
-fn single_properties_map_to_physical_sides() {
+fn single_properties_map_to_their_canonical_names() {
     let cases = [
-        ("margin-inline-start", "margin-left"),
-        ("margin-inline-end", "margin-right"),
+        ("margin-inline-start", "margin-inline-start"),
+        ("margin-inline-end", "margin-inline-end"),
         ("margin-block-start", "margin-top"),
         ("margin-block-end", "margin-bottom"),
-        ("padding-inline-start", "padding-left"),
-        ("padding-inline-end", "padding-right"),
+        ("padding-inline-start", "padding-inline-start"),
+        ("padding-inline-end", "padding-inline-end"),
         ("padding-block-start", "padding-top"),
         ("padding-block-end", "padding-bottom"),
-        ("inset-inline-start", "left"),
-        ("inset-inline-end", "right"),
+        ("inset-inline-start", "inset-inline-start"),
+        ("inset-inline-end", "inset-inline-end"),
         ("inset-block-start", "top"),
         ("inset-block-end", "bottom"),
         ("inline-size", "width"),
@@ -55,11 +55,11 @@ fn single_properties_map_to_physical_sides() {
         ("min-inline-size", "min-width"),
         ("max-block-size", "max-height"),
         ("overflow-inline", "overflow-x"),
-        ("border-inline-start-width", "border-left-width"),
+        ("border-inline-start-width", "border-inline-start-width"),
         ("border-block-end-style", "border-bottom-style"),
-        ("border-inline-end-color", "border-right-color"),
+        ("border-inline-end-color", "border-inline-end-color"),
         ("scroll-margin-block-start", "scroll-margin-top"),
-        ("scroll-padding-inline-end", "scroll-padding-right"),
+        ("scroll-padding-inline-end", "scroll-padding-inline-end"),
     ];
     for (logical, physical) in cases {
         let value = if logical.ends_with("-style") {
@@ -83,7 +83,10 @@ fn single_properties_map_to_physical_sides() {
 #[test]
 fn values_are_kept() {
     let found = declarations("margin-inline-start: 7px");
-    assert_eq!(found, vec![("margin-left".to_string(), Value::Length(7.0))]);
+    assert_eq!(
+        found,
+        vec![("margin-inline-start".to_string(), Value::Length(7.0))]
+    );
 }
 
 #[test]
@@ -92,8 +95,8 @@ fn pairs_take_one_or_two_values() {
     assert_eq!(
         one,
         vec![
-            ("margin-left".to_string(), Value::Length(4.0)),
-            ("margin-right".to_string(), Value::Length(4.0))
+            ("margin-inline-start".to_string(), Value::Length(4.0)),
+            ("margin-inline-end".to_string(), Value::Length(4.0))
         ]
     );
     let two = declarations("padding-block: 1px 2px");
@@ -104,7 +107,10 @@ fn pairs_take_one_or_two_values() {
             ("padding-bottom".to_string(), Value::Length(2.0))
         ]
     );
-    assert_eq!(names("inset-inline: 0 5px"), vec!["left", "right"]);
+    assert_eq!(
+        names("inset-inline: 0 5px"),
+        vec!["inset-inline-start", "inset-inline-end"]
+    );
     assert_eq!(names("inset-block: 0"), vec!["top", "bottom"]);
 }
 
@@ -112,7 +118,7 @@ fn pairs_take_one_or_two_values() {
 fn border_pairs_map_every_part() {
     assert_eq!(
         names("border-inline-width: 1px 2px"),
-        vec!["border-left-width", "border-right-width"]
+        vec!["border-inline-start-width", "border-inline-end-width"]
     );
     assert_eq!(
         names("border-block-style: solid dashed"),
@@ -120,15 +126,15 @@ fn border_pairs_map_every_part() {
     );
     assert_eq!(
         names("border-inline-color: red blue"),
-        vec!["border-left-color", "border-right-color"]
+        vec!["border-inline-start-color", "border-inline-end-color"]
     );
 }
 
 #[test]
-fn border_shorthands_apply_to_the_physical_sides() {
+fn border_shorthands_keep_their_logical_sides() {
     let start = names("border-inline-start: 2px solid red");
     assert!(
-        start.iter().all(|name| name.contains("left")),
+        start.iter().all(|name| name.contains("inline-start")),
         "{:?}",
         start
     );
@@ -137,8 +143,14 @@ fn border_shorthands_apply_to_the_physical_sides() {
     assert_eq!(both.iter().filter(|n| n.contains("top")).count(), 3);
     assert_eq!(both.iter().filter(|n| n.contains("bottom")).count(), 3);
     let inline = names("border-inline: 1px dotted blue");
-    assert_eq!(inline.iter().filter(|n| n.contains("left")).count(), 3);
-    assert_eq!(inline.iter().filter(|n| n.contains("right")).count(), 3);
+    assert_eq!(
+        inline.iter().filter(|n| n.contains("inline-start")).count(),
+        3
+    );
+    assert_eq!(
+        inline.iter().filter(|n| n.contains("inline-end")).count(),
+        3
+    );
 }
 
 #[test]

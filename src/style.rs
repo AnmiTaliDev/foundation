@@ -15,6 +15,7 @@ use crate::generated;
 use crate::gradient::Gradient;
 use crate::gridspec::{Line, TrackList};
 use crate::layout::Rect;
+use crate::logical;
 use crate::radius::Radii;
 use crate::selector::{self, PseudoElement, Scope};
 use crate::shadow::Shadow;
@@ -43,7 +44,7 @@ pub const USER_AGENT_STYLESHEET: &str =
     th { font-weight: bold; text-align: center; } \
     caption { text-align: center; } \
     colgroup, col { display: none; } \
-    ul, ol { margin-top: 16px; margin-bottom: 16px; padding-left: 40px; } \
+    ul, ol { margin-top: 16px; margin-bottom: 16px; padding-inline-start: 40px; } \
     ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; } \
     li { display: list-item; } \
     ul { list-style-type: disc; } ol { list-style-type: decimal; } \
@@ -905,8 +906,18 @@ fn specified_values(
     entries.sort_by_key(|entry| entry.0);
 
     let mut values = inherited;
+    let is_rtl = |value: Option<&Value>| matches!(value, Some(Value::Keyword(k)) if k == "rtl");
+    let rtl = entries
+        .iter()
+        .rev()
+        .find(|(_, declaration)| declaration.name == "direction")
+        .map_or_else(
+            || is_rtl(values.get("direction")),
+            |(_, declaration)| is_rtl(Some(&declaration.value)),
+        );
     for (_, declaration) in entries {
-        values.insert(declaration.name.clone(), declaration.value.clone());
+        let name = logical::physical(&declaration.name, rtl);
+        values.insert(name.to_string(), declaration.value.clone());
     }
     values
 }
