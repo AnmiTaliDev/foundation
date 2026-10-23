@@ -30,6 +30,7 @@ pub mod radius;
 pub mod scroll;
 pub mod selector;
 pub mod shadow;
+pub mod sticky;
 pub mod style;
 pub mod supports;
 mod table;

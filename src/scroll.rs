@@ -163,6 +163,7 @@ impl LayoutBox<'_> {
     pub fn apply_scrolls(&mut self, offsets: &Offsets, fonts: &Fonts) -> Vec<Scroller> {
         let mut scrollers = Vec::new();
         self.scroll_walk(offsets, fonts, &mut scrollers);
+        self.stick_horizontally();
         scrollers
     }
 
