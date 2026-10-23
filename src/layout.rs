@@ -1229,7 +1229,11 @@ impl<'a> LayoutBox<'a> {
             first_baseline(self).unwrap_or(self.dimensions.content.y + fonts.ascent(face, size));
         let width = fonts.width(face, text, size);
         let fragment = Fragment {
-            x: self.dimensions.content.x - width,
+            x: if style.rtl() {
+                self.dimensions.content.x + self.dimensions.content.width
+            } else {
+                self.dimensions.content.x - width
+            },
             baseline,
             text: text.clone(),
             color: style.text_color(),
