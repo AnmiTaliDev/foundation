@@ -865,6 +865,7 @@ impl<'a> LayoutBox<'a> {
         images: &ImageMap,
     ) {
         let width = self.dimensions.content.width;
+        let rtl = style.rtl();
         let origin_x = self.dimensions.content.x;
         let origin_y = self.dimensions.content.y;
         let height = style.length_or_auto("height", None, None);
@@ -1024,7 +1025,7 @@ impl<'a> LayoutBox<'a> {
                 item.style,
                 (area_x, area_y, area_width, area_height),
                 (justify, align),
-                width,
+                (width, rtl),
                 fonts,
                 images,
             );
@@ -1117,10 +1118,11 @@ fn place_item(
     style: Option<&StyledNode>,
     area: (f32, f32, f32, f32),
     alignment: (Align, Align),
-    container_width: f32,
+    container: (f32, bool),
     fonts: &Fonts,
     images: &ImageMap,
 ) {
+    let (container_width, rtl) = container;
     let (area_x, area_y, area_width, area_height) = area;
     let (justify, align) = alignment;
     let margins = margins_of(style, area_width);
@@ -1165,10 +1167,17 @@ fn place_item(
     let border_box = child.dimensions.border_box();
     let free_x = area_width - border_box.width - margins.left - margins.right;
     let free_y = area_height - border_box.height - margins.top - margins.bottom;
-    let (auto_left, auto_right) = (
-        is_auto_margin(style, "margin-left"),
-        is_auto_margin(style, "margin-right"),
-    );
+    let (auto_left, auto_right) = if rtl {
+        (
+            is_auto_margin(style, "margin-right"),
+            is_auto_margin(style, "margin-left"),
+        )
+    } else {
+        (
+            is_auto_margin(style, "margin-left"),
+            is_auto_margin(style, "margin-right"),
+        )
+    };
     let (auto_top, auto_bottom) = (
         is_auto_margin(style, "margin-top"),
         is_auto_margin(style, "margin-bottom"),
