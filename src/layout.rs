@@ -44,6 +44,7 @@ pub struct Dimensions {
     pub padding: EdgeSizes,
     pub border: EdgeSizes,
     pub margin: EdgeSizes,
+    pub rtl: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -516,6 +517,7 @@ fn resolve_horizontal(
     margin_right: Option<f32>,
     fixed: f32,
     container: f32,
+    rtl: bool,
 ) -> (f32, f32, f32) {
     let mut margin_left = margin_left;
     let mut margin_right = margin_right;
@@ -530,6 +532,7 @@ fn resolve_horizontal(
     let underflow = container - total;
 
     match (width, margin_left, margin_right) {
+        (Some(w), Some(l), Some(r)) if rtl => (w, l + underflow, r),
         (Some(w), Some(l), Some(r)) => (w, l, r + underflow),
         (Some(w), Some(l), None) => (w, l, underflow),
         (Some(w), None, Some(r)) => (w, underflow, r),
@@ -539,6 +542,8 @@ fn resolve_horizontal(
             let r = r.unwrap_or(0.0);
             if underflow >= 0.0 {
                 (underflow, l, r)
+            } else if rtl {
+                (0.0, l + underflow, r)
             } else {
                 (0.0, l, r + underflow)
             }
@@ -566,6 +571,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 let sizes = self.content_sizes(style, containing.content.width, fonts, images);
                 self.calculate_width(style, containing, replaced.as_ref(), sizes);
+                self.dimensions.rtl = style.rtl();
                 self.forced_width = given_width;
                 if table {
                     self.center_table(style, containing.content.width);
@@ -699,15 +705,27 @@ impl<'a> LayoutBox<'a> {
         let padding_right = style.px("padding-right", container);
         let fixed = border_left + border_right + padding_left + padding_right;
 
-        let (mut w, mut ml, mut mr) =
-            resolve_horizontal(width, margin_left, margin_right, fixed, container);
+        let (mut w, mut ml, mut mr) = resolve_horizontal(
+            width,
+            margin_left,
+            margin_right,
+            fixed,
+            container,
+            containing.rtl,
+        );
         if let Some(max) = style
             .length_or_auto("max-width", None, Some(container))
             .or(content_max)
         {
             if w > max {
-                (w, ml, mr) =
-                    resolve_horizontal(Some(max), margin_left, margin_right, fixed, container);
+                (w, ml, mr) = resolve_horizontal(
+                    Some(max),
+                    margin_left,
+                    margin_right,
+                    fixed,
+                    container,
+                    containing.rtl,
+                );
             }
         }
         if let Some(min) = style
@@ -715,8 +733,14 @@ impl<'a> LayoutBox<'a> {
             .or(content_min)
         {
             if w < min {
-                (w, ml, mr) =
-                    resolve_horizontal(Some(min), margin_left, margin_right, fixed, container);
+                (w, ml, mr) = resolve_horizontal(
+                    Some(min),
+                    margin_left,
+                    margin_right,
+                    fixed,
+                    container,
+                    containing.rtl,
+                );
             }
         }
 
@@ -914,7 +938,7 @@ impl<'a> LayoutBox<'a> {
                 if margin_left_auto && margin_right_auto {
                     let free = (area.width - left - right - border_box.width).max(0.0);
                     area.x + left + free / 2.0
-                } else if margin_left_auto {
+                } else if margin_left_auto || (style.rtl() && !margin_right_auto) {
                     area.x + area.width - right - margin_right - border_box.width
                 } else {
                     area.x + left + margin_left
