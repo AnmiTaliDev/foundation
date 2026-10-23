@@ -100,3 +100,15 @@ fn visibility_is_supported() {
     assert!(foundation::supports::evaluate("(visibility: hidden)"));
     assert!(foundation::supports::evaluate("(visibility: collapse)"));
 }
+
+#[test]
+fn scroll_snap_properties_are_supported() {
+    assert!(foundation::supports::evaluate(
+        "(scroll-snap-type: x mandatory)"
+    ));
+    assert!(foundation::supports::evaluate("(scroll-snap-align: start)"));
+    assert!(foundation::supports::evaluate("(scroll-snap-stop: always)"));
+    assert!(!foundation::supports::evaluate(
+        "(scroll-snap-type: sideways)"
+    ));
+}
