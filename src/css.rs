@@ -825,6 +825,9 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
     }
     let value = value.trim();
 
+    if let Some(declarations) = crate::logical::expand(&name, value) {
+        return declarations;
+    }
     if name == "content" {
         return expand_content(name, value);
     }
