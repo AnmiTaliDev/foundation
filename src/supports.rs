@@ -3,7 +3,7 @@
 use crate::css::{self, Value};
 use crate::media::split_terms;
 
-const PROPERTIES: [&str; 140] = [
+const PROPERTIES: [&str; 141] = [
     "opacity",
     "transform-origin-x",
     "transform-origin-y",
@@ -144,6 +144,7 @@ const PROPERTIES: [&str; 140] = [
     "scroll-margin-right",
     "scroll-margin-bottom",
     "scroll-margin-left",
+    "direction",
 ];
 
 const DISPLAYS: [&str; 10] = [

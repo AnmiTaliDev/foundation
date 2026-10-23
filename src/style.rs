@@ -84,7 +84,8 @@ const PLACEHOLDER_COLOR: Color = Color {
 
 pub const BLACK: Color = Color { r: 0, g: 0, b: 0 };
 
-const INHERITED_PROPERTIES: [&str; 19] = [
+const INHERITED_PROPERTIES: [&str; 20] = [
+    "direction",
     "visibility",
     "scrollbar-thumb-color",
     "scrollbar-track-color",
@@ -1011,14 +1012,28 @@ impl<'a> StyledNode<'a> {
         }
     }
 
+    pub fn rtl(&self) -> bool {
+        self.keyword("direction") == Some("rtl")
+    }
+
     pub fn text_align(&self) -> TextAlign {
-        match self.value("text-align") {
-            Some(Value::Keyword(keyword)) if keyword == "center" => TextAlign::Center,
-            Some(Value::Keyword(keyword)) if keyword == "right" || keyword == "end" => {
-                TextAlign::Right
-            }
-            Some(Value::Keyword(keyword)) if keyword == "justify" => TextAlign::Justify,
-            _ => TextAlign::Left,
+        let start = if self.rtl() {
+            TextAlign::Right
+        } else {
+            TextAlign::Left
+        };
+        let end = if self.rtl() {
+            TextAlign::Left
+        } else {
+            TextAlign::Right
+        };
+        match self.keyword("text-align") {
+            Some("center") => TextAlign::Center,
+            Some("right") => TextAlign::Right,
+            Some("left") => TextAlign::Left,
+            Some("end") => end,
+            Some("justify") => TextAlign::Justify,
+            _ => start,
         }
     }
 

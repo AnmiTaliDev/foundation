@@ -1086,6 +1086,17 @@ pub(crate) fn parse_declaration(item: &str) -> Vec<Declaration> {
             Err(_) => Vec::new(),
         };
     }
+    if name == "direction" {
+        return match parse_value(value) {
+            Some(Value::Keyword(keyword)) if matches!(keyword.as_str(), "ltr" | "rtl") => {
+                vec![Declaration {
+                    name,
+                    value: Value::Keyword(keyword),
+                }]
+            }
+            _ => Vec::new(),
+        };
+    }
     if name == "scrollbar-width" {
         return match parse_value(value) {
             Some(Value::Keyword(keyword))
