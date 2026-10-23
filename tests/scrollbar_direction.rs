@@ -50,7 +50,8 @@ fn the_corner_moves_the_horizontal_bar_in_rtl() {
         "height: 80px; width: 80px",
     );
     assert_eq!(pixel(&page, 3, 35), RED);
-    assert_eq!(pixel(&page, 12, 35), THUMB);
+    assert_eq!(pixel(&page, 12, 35), TRACK);
+    assert_eq!(pixel(&page, 35, 35), THUMB);
     assert_eq!(pixel(&page, 3, 5), THUMB);
 }
 

@@ -25,7 +25,8 @@ impl LayoutBox<'_> {
         let bars = self.scrollbars?;
         let area = self.dimensions.padding_box();
         let bar = if bars.show.1 { bars.width } else { 0.0 };
-        Some((area.x, (area.width - bar).max(0.0)))
+        let start = if bars.rtl { area.x + bar } else { area.x };
+        Some((start, (area.width - bar).max(0.0)))
     }
 
     fn sticky_shift(&self, container: Rect, port: (f32, f32)) -> f32 {

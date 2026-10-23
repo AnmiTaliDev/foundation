@@ -47,7 +47,14 @@ impl Scrollbars {
                 width: self.width,
                 height: (area.height - corner).max(0.0),
             };
-            bars.push(bar(track, true, area.height, self.offset.1, self.max.1));
+            bars.push(bar(
+                track,
+                true,
+                area.height,
+                self.offset.1,
+                self.max.1,
+                false,
+            ));
         }
         if self.show.0 {
             let track = Rect {
@@ -56,13 +63,20 @@ impl Scrollbars {
                 width: (area.width - corner).max(0.0),
                 height: self.width,
             };
-            bars.push(bar(track, false, area.width, self.offset.0, self.max.0));
+            bars.push(bar(
+                track,
+                false,
+                area.width,
+                self.offset.0,
+                self.max.0,
+                self.rtl,
+            ));
         }
         bars
     }
 }
 
-fn bar(track: Rect, vertical: bool, view: f32, offset: f32, max: f32) -> Bar {
+fn bar(track: Rect, vertical: bool, view: f32, offset: f32, max: f32, reversed: bool) -> Bar {
     let length = if vertical { track.height } else { track.width };
     let size = (length * view / (view + max))
         .max(SCROLLBAR_MIN_THUMB)
@@ -71,6 +85,11 @@ fn bar(track: Rect, vertical: bool, view: f32, offset: f32, max: f32) -> Bar {
         offset / max * (length - size)
     } else {
         0.0
+    };
+    let travel = if reversed {
+        length - size - travel
+    } else {
+        travel
     };
     let thumb = if vertical {
         Rect {
@@ -140,7 +159,13 @@ impl Scrollbars {
             return Some(0.0);
         }
         let travel = (pointer - grab.anchor - track_start).clamp(0.0, space);
-        Some(travel / space * max)
+        let fraction = travel / space;
+        let fraction = if !grab.vertical && self.rtl {
+            1.0 - fraction
+        } else {
+            fraction
+        };
+        Some(fraction * max)
     }
 }
 
@@ -151,6 +176,7 @@ pub struct Scroller {
     pub offset: (f32, f32),
     pub max: (f32, f32),
     pub axes: (bool, bool),
+    pub rtl: bool,
     pub port: (f32, f32),
     pub snap: (Option<Strictness>, Option<Strictness>),
     pub points: (Vec<SnapPoint>, Vec<SnapPoint>),
@@ -160,11 +186,20 @@ impl LayoutBox<'_> {
     pub fn scroll_size(&self, fonts: &Fonts) -> (f32, f32) {
         let padding = self.dimensions.padding_box();
         let content = self.dimensions.content;
-        let mut extent = (padding.x + padding.width, content.y + content.height);
+        let mut extent = (
+            padding.x + padding.width,
+            content.y + content.height,
+            padding.x,
+        );
         self.extend_overflow(fonts, &mut extent);
-        let (right, bottom) = extent;
+        let (right, bottom, left) = extent;
+        let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
         (
-            right - padding.x,
+            if rtl {
+                padding.x + padding.width - left
+            } else {
+                right - padding.x
+            },
             (bottom + self.dimensions.padding.bottom - padding.y).max(padding.height),
         )
     }
@@ -246,15 +281,16 @@ impl LayoutBox<'_> {
                     },
                 );
             }
+            let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
             scrollers.push(Scroller {
                 offset,
                 max,
                 axes,
+                rtl,
                 port: (padding.width, padding.height),
                 snap,
                 points,
             });
-            let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
             self.scrollbars = Some(Scrollbars {
                 offset,
                 max,
@@ -274,7 +310,8 @@ impl LayoutBox<'_> {
         }
         if let Some((x, y)) = container {
             if x != 0.0 || y != 0.0 {
-                self.shift_content(-x, -y);
+                let rtl = matches!(self.kind, BoxKind::Block(style) if style.rtl());
+                self.shift_content(if rtl { x } else { -x }, -y);
             }
         }
     }
@@ -363,26 +400,26 @@ impl LayoutBox<'_> {
         }
     }
 
-    fn extend_overflow(&self, fonts: &Fonts, extent: &mut (f32, f32)) {
+    fn extend_overflow(&self, fonts: &Fonts, extent: &mut (f32, f32, f32)) {
         for fragment in &self.fragments {
             let width = fonts.width(fragment.face, &fragment.text, fragment.font_size)
                 + fragment.letter_spacing * fragment.text.chars().count() as f32;
             reach(
                 extent,
-                fragment.x + width,
+                (fragment.x, fragment.x + width),
                 fragment.baseline + fonts.descent(fragment.face, fragment.font_size),
             );
         }
         for image in &self.images {
             reach(
                 extent,
-                image.rect.x + image.rect.width,
+                (image.rect.x, image.rect.x + image.rect.width),
                 image.rect.y + image.rect.height,
             );
         }
         for inline_box in &self.inline_boxes {
             let rect = inline_box.rect;
-            reach(extent, rect.x + rect.width, rect.y + rect.height);
+            reach(extent, (rect.x, rect.x + rect.width), rect.y + rect.height);
         }
         for child in &self.children {
             let mut clipped = false;
@@ -393,7 +430,11 @@ impl LayoutBox<'_> {
                 clipped = style.establishes_clip();
             }
             let border = child.dimensions.border_box();
-            reach(extent, border.x + border.width, border.y + border.height);
+            reach(
+                extent,
+                (border.x, border.x + border.width),
+                border.y + border.height,
+            );
             if !clipped {
                 child.extend_overflow(fonts, extent);
             }
@@ -423,9 +464,10 @@ fn sorted(mut points: Vec<SnapPoint>) -> Vec<SnapPoint> {
     points
 }
 
-fn reach(extent: &mut (f32, f32), x: f32, y: f32) {
-    extent.0 = extent.0.max(x);
+fn reach(extent: &mut (f32, f32, f32), x: (f32, f32), y: f32) {
+    extent.0 = extent.0.max(x.1);
     extent.1 = extent.1.max(y);
+    extent.2 = extent.2.min(x.0);
 }
 
 fn contains(layout_box: &LayoutBox, x: f32, y: f32) -> bool {

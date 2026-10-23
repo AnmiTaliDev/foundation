@@ -243,14 +243,17 @@ impl Page {
             let (x, y) = scroller.offset;
             let mut next = (x, y);
             if scroller.axes.0 {
-                (next.0, remaining_x) = snap::advance(
+                let sign = if scroller.rtl { -1.0 } else { 1.0 };
+                let (moved, rest) = snap::advance(
                     x,
-                    remaining_x,
+                    sign * remaining_x,
                     scroller.max.0,
                     scroller.snap.0,
                     &scroller.points.0,
                     scroller.port.0,
                 );
+                next.0 = moved;
+                remaining_x = sign * rest;
             }
             if scroller.axes.1 {
                 (next.1, remaining_y) = snap::advance(
