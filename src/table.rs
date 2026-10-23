@@ -625,6 +625,32 @@ impl<'a> LayoutBox<'a> {
             .collect()
     }
 
+    fn cell_alignment(&self, cell: &Cell, grid: &Grid) -> String {
+        let own = match &self.cell_box(cell).kind {
+            BoxKind::Block(style) => style.vertical_align().map(str::to_string),
+            BoxKind::Anonymous(_) => None,
+        };
+        let row = match &self.row_box(&grid.rows[cell.row]).kind {
+            BoxKind::Block(style) => style.vertical_align().map(str::to_string),
+            BoxKind::Anonymous(_) => None,
+        };
+        own.or(row).unwrap_or_else(|| "middle".to_string())
+    }
+
+    fn first_baseline(&self) -> Option<f32> {
+        let own = self
+            .fragments
+            .iter()
+            .map(|fragment| fragment.baseline)
+            .chain(
+                self.images
+                    .iter()
+                    .map(|image| image.rect.y + image.rect.height),
+            )
+            .reduce(f32::min);
+        own.or_else(|| self.children.iter().find_map(LayoutBox::first_baseline))
+    }
+
     fn caption_width(&self, mode: Intrinsic, fonts: &Fonts, images: &ImageMap, base: f32) -> f32 {
         self.children
             .iter()
@@ -826,9 +852,15 @@ impl<'a> LayoutBox<'a> {
             }
         }
 
+        let alignments: Vec<String> = grid
+            .cells
+            .iter()
+            .map(|cell| self.cell_alignment(cell, &grid))
+            .collect();
+        let mut baselines: Vec<Option<f32>> = Vec::with_capacity(grid.cells.len());
         let mut natural = Vec::with_capacity(grid.cells.len());
         let mut minimum_heights = Vec::with_capacity(grid.cells.len());
-        for (cell, plan) in grid.cells.iter().zip(&plans) {
+        for (index, (cell, plan)) in grid.cells.iter().zip(&plans).enumerate() {
             let column_end = cell.column + cell.columns;
             let cell_width: f32 = widths[cell.column..column_end].iter().sum::<f32>()
                 + gaps.x * (cell.columns - 1) as f32;
@@ -839,6 +871,7 @@ impl<'a> LayoutBox<'a> {
             let BoxKind::Block(cell_style) = &cell_box.kind else {
                 natural.push(0.0);
                 minimum_heights.push(0.0);
+                baselines.push(None);
                 continue;
             };
             let cell_style = *cell_style;
@@ -858,6 +891,12 @@ impl<'a> LayoutBox<'a> {
             };
             cell_box.layout(&containing, fonts, images, &mut FloatContext::default());
             natural.push(cell_box.dimensions.border_box().height);
+            baselines.push(if alignments[index] == "baseline" && cell.rows == 1 {
+                let top = cell_box.dimensions.border_box().y;
+                cell_box.first_baseline().map(|baseline| baseline - top)
+            } else {
+                None
+            });
             let specified = cell_style
                 .length_or_auto("height", None, None)
                 .map(|height| {
@@ -871,6 +910,20 @@ impl<'a> LayoutBox<'a> {
             if cell.rows == 1 {
                 row_heights[cell.row] = row_heights[cell.row].max(height.max(*minimum));
             }
+        }
+        let mut row_baseline = vec![0.0f32; row_count];
+        let mut row_below = vec![0.0f32; row_count];
+        for ((cell, height), baseline) in grid.cells.iter().zip(&natural).zip(&baselines) {
+            if let Some(baseline) = baseline {
+                row_baseline[cell.row] = row_baseline[cell.row].max(*baseline);
+                row_below[cell.row] = row_below[cell.row].max(height - baseline);
+            }
+        }
+        for (row_height, (above, below)) in row_heights
+            .iter_mut()
+            .zip(row_baseline.iter().zip(&row_below))
+        {
+            *row_height = row_height.max(above + below);
         }
         for (cell, height) in grid.cells.iter().zip(&natural) {
             if cell.rows == 1 {
@@ -894,28 +947,20 @@ impl<'a> LayoutBox<'a> {
             y += row_height + gaps.y;
         }
 
-        for (cell, natural_height) in grid.cells.iter().zip(&natural) {
+        for (index, (cell, natural_height)) in grid.cells.iter().zip(&natural).enumerate() {
             let row_end = cell.row + cell.rows;
             let target: f32 = row_heights[cell.row..row_end].iter().sum::<f32>()
                 + gaps.y * (cell.rows - 1) as f32;
-            let row_alignment = match &self.row_box(&grid.rows[cell.row]).kind {
-                BoxKind::Block(row_style) => row_style.vertical_align().map(str::to_string),
-                BoxKind::Anonymous(_) => None,
-            };
             let destination = (column_x[cell.column], row_y[cell.row]);
             let cell_box = self.cell_box_mut(cell);
-            let BoxKind::Block(cell_style) = &cell_box.kind else {
+            if matches!(cell_box.kind, BoxKind::Anonymous(_)) {
                 continue;
-            };
-            let alignment = cell_style
-                .vertical_align()
-                .map(str::to_string)
-                .or(row_alignment)
-                .unwrap_or_else(|| "middle".to_string());
+            }
             let free = (target - natural_height).max(0.0);
-            let shift = match alignment.as_str() {
+            let shift = match alignments[index].as_str() {
                 "middle" => free / 2.0,
                 "bottom" => free,
+                "baseline" => baselines[index].map_or(0.0, |own| row_baseline[cell.row] - own),
                 _ => 0.0,
             };
             if shift != 0.0 {
