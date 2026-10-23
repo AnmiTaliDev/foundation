@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use crate::bidi;
 use crate::css::Color;
 use crate::decoration::{Decoration, Line, LineStyle};
 use crate::float::FloatContext;
@@ -188,8 +189,11 @@ struct Word<'a> {
     opens: Vec<Rc<InlineBoxStyle>>,
     closes: Vec<Rc<InlineBoxStyle>>,
     stack: Vec<Rc<InlineBoxStyle>>,
+    level: u8,
+    glue: bool,
 }
 
+#[derive(Clone, Copy)]
 struct PlacedWord<'a, 'b> {
     word: &'b Word<'a>,
     offset: f32,
@@ -334,32 +338,104 @@ fn text_words<'a>(
     words
 }
 
+fn paragraph_levels(items: &[InlineItem], rtl: bool) -> (Vec<u8>, Vec<usize>) {
+    let mut flat: Vec<char> = Vec::new();
+    let mut starts = Vec::with_capacity(items.len());
+    for item in items {
+        starts.push(flat.len());
+        match item {
+            InlineItem::Text(run) => flat.extend(run.text.chars()),
+            InlineItem::Image(_) | InlineItem::Block(_) => flat.push('\u{FFFC}'),
+            InlineItem::Open(_) | InlineItem::Close(_) => {}
+        }
+    }
+    (bidi::levels(&flat, rtl), starts)
+}
+
+fn needs_bidi(items: &[InlineItem], rtl: bool) -> bool {
+    rtl || items.iter().any(|item| match item {
+        InlineItem::Text(run) => run.text.chars().any(|c| {
+            matches!(
+                bidi::class(c),
+                bidi::Class::R | bidi::Class::AL | bidi::Class::AN
+            )
+        }),
+        _ => false,
+    })
+}
+
+fn split_by_level<'a>(text: &'a str, levels: &[u8]) -> Vec<(&'a str, u8)> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut current = levels.first().copied().unwrap_or(0);
+    for ((offset, _), level) in text.char_indices().zip(levels) {
+        if *level != current {
+            pieces.push((&text[start..offset], current));
+            start = offset;
+            current = *level;
+        }
+    }
+    pieces.push((&text[start..], current));
+    pieces
+}
+
 fn collect_words<'a>(
     items: &'a [InlineItem<'a>],
     fonts: &Fonts,
     blocks: &'a [BlockMetrics],
+    rtl: bool,
 ) -> Vec<Word<'a>> {
+    let (levels, starts) = if needs_bidi(items, rtl) {
+        paragraph_levels(items, rtl)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let level_at = |position: usize| levels.get(position).copied().unwrap_or(0);
     let mut block_index = 0;
     let mut words: Vec<Word<'a>> = Vec::new();
     let mut carry_space = false;
     let mut pending_break = false;
     let mut stack: Vec<Rc<InlineBoxStyle>> = Vec::new();
     let mut pending: Vec<Rc<InlineBoxStyle>> = Vec::new();
-    for item in items {
+    for (item_index, item) in items.iter().enumerate() {
         match item {
             InlineItem::Text(run) => {
                 let face = fonts.select(run.families, run.bold, run.italic);
+                let base = starts.get(item_index).copied().unwrap_or(0);
+                let mut cursor = (0usize, 0usize);
                 for (text, space_before, break_before) in
                     text_words(run, carry_space, &mut pending_break)
                 {
-                    words.push(Word {
-                        piece: Piece::Text { text, run, face },
-                        space_before,
-                        break_before,
-                        opens: std::mem::take(&mut pending),
-                        closes: Vec::new(),
-                        stack: stack.clone(),
-                    });
+                    let pieces = if levels.is_empty() || text.is_empty() {
+                        vec![(text, 0)]
+                    } else {
+                        let byte = text.as_ptr() as usize - run.text.as_ptr() as usize;
+                        cursor.1 += run.text[cursor.0..byte].chars().count();
+                        cursor.0 = byte;
+                        let first = base + cursor.1;
+                        let count = text.chars().count();
+                        split_by_level(text, &levels[first..first + count])
+                    };
+                    for (index, (piece, level)) in pieces.into_iter().enumerate() {
+                        words.push(Word {
+                            piece: Piece::Text {
+                                text: piece,
+                                run,
+                                face,
+                            },
+                            space_before: index == 0 && space_before,
+                            break_before: index == 0 && break_before,
+                            opens: if index == 0 {
+                                std::mem::take(&mut pending)
+                            } else {
+                                Vec::new()
+                            },
+                            closes: Vec::new(),
+                            stack: stack.clone(),
+                            level,
+                            glue: index > 0,
+                        });
+                    }
                 }
                 carry_space = !run.white_space.keeps_spaces()
                     && !pending_break
@@ -373,6 +449,8 @@ fn collect_words<'a>(
                     opens: std::mem::take(&mut pending),
                     closes: Vec::new(),
                     stack: stack.clone(),
+                    level: level_at(starts.get(item_index).copied().unwrap_or(0)),
+                    glue: false,
                 });
                 carry_space = false;
             }
@@ -388,6 +466,8 @@ fn collect_words<'a>(
                     opens: std::mem::take(&mut pending),
                     closes: Vec::new(),
                     stack: stack.clone(),
+                    level: level_at(starts.get(item_index).copied().unwrap_or(0)),
+                    glue: false,
                 });
                 block_index += 1;
                 carry_space = false;
@@ -459,6 +539,8 @@ fn split_long_word<'a>(word: Word<'a>, width: f32, fonts: &Fonts, per_char: bool
                 Vec::new()
             },
             stack: word.stack.clone(),
+            level: word.level,
+            glue: word.glue,
         });
     }
     result
@@ -483,7 +565,7 @@ fn fit_words<'a>(words: Vec<Word<'a>>, width: f32, fonts: &Fonts) -> Vec<Word<'a
 }
 
 pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
-    let words = collect_words(&content.items, fonts, blocks);
+    let words = collect_words(&content.items, fonts, blocks, content.rtl);
     let mut widest: f32 = 0.0;
     let mut total = 0.0;
     for word in &words {
@@ -500,12 +582,12 @@ pub fn max_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[Block
 }
 
 pub fn min_content_width(content: &InlineContent, fonts: &Fonts, blocks: &[BlockMetrics]) -> f32 {
-    let words = collect_words(&content.items, fonts, blocks);
+    let words = collect_words(&content.items, fonts, blocks, content.rtl);
     let mut widest: f32 = 0.0;
     let mut current = 0.0;
     for word in &words {
         let mut width = word.width(fonts);
-        if !word.wraps() && !word.break_before && current > 0.0 {
+        if (!word.wraps() || word.glue) && !word.break_before && current > 0.0 {
             if word.space_before {
                 width += word.space(fonts);
             }
@@ -527,7 +609,11 @@ pub fn layout_lines(
     floats: &FloatContext,
     blocks: &[BlockMetrics],
 ) -> Lines {
-    let words = fit_words(collect_words(&content.items, fonts, blocks), width, fonts);
+    let words = fit_words(
+        collect_words(&content.items, fonts, blocks, content.rtl),
+        width,
+        fonts,
+    );
     let mut lines = Lines::default();
     let mut line: Vec<PlacedWord> = Vec::new();
     let mut area = Area {
@@ -545,7 +631,7 @@ pub fn layout_lines(
         if x > 0.0 && word.space_before {
             space = word.space(fonts);
         }
-        let overflows = word.wraps() && x + space + word_width > area.width;
+        let overflows = word.wraps() && !word.glue && x + space + word_width > area.width;
         if !line.is_empty() && (overflows || word.break_before) {
             let justify = overflows && !word.break_before;
             top += end_line(&mut line, content, justify, &area, top, fonts, &mut lines);
@@ -599,6 +685,7 @@ fn end_line(
     } else {
         content.align
     };
+    reorder_line(line);
     let height = finish_line(line, align, justify, area, top, fonts, lines);
     if content.ellipsis {
         ellipsize(
@@ -654,6 +741,52 @@ fn ellipsize(fragments: &mut Vec<Fragment>, start: usize, right: f32, fonts: &Fo
         }
         fragments.push(mark);
         return;
+    }
+}
+
+fn reorder_line(line: &mut [PlacedWord]) {
+    let decorated = |placed: &PlacedWord| {
+        !placed.word.stack.is_empty()
+            || !placed.word.opens.is_empty()
+            || !placed.word.closes.is_empty()
+    };
+    if line.iter().all(|placed| placed.word.level % 2 == 0) || line.iter().any(decorated) {
+        return;
+    }
+    enum Item {
+        Word(usize),
+        Gap(f32),
+    }
+    let mut items = Vec::new();
+    let mut levels = Vec::new();
+    for (index, placed) in line.iter().enumerate() {
+        if index > 0 {
+            let before = &line[index - 1];
+            let gap = placed.offset - (before.offset + before.width);
+            if gap > 0.0001 {
+                items.push(Item::Gap(gap));
+                levels.push(before.word.level.min(placed.word.level));
+            }
+        }
+        items.push(Item::Word(index));
+        levels.push(placed.word.level);
+    }
+    let original: Vec<PlacedWord> = line.to_vec();
+    let mut position = 0.0;
+    let mut slot = 0;
+    for index in bidi::reorder(&levels) {
+        match items[index] {
+            Item::Gap(width) => position += width,
+            Item::Word(word) => {
+                let placed = original[word];
+                line[slot] = PlacedWord {
+                    offset: position,
+                    ..placed
+                };
+                position += placed.width;
+                slot += 1;
+            }
+        }
     }
 }
 
@@ -733,7 +866,11 @@ fn finish_line(
                 lines.fragments.push(Fragment {
                     x,
                     baseline,
-                    text: word_text.to_string(),
+                    text: if placed.word.level % 2 == 1 {
+                        bidi::reverse_visual(word_text)
+                    } else {
+                        word_text.to_string()
+                    },
                     color: run.color,
                     alpha: run.alpha,
                     font_size: run.font_size,
